@@ -1,0 +1,16 @@
+*.log
+*.txt
+*.pkl
+client_debug/src/cpp/build
+client_debug/layer_dump
+client_debug/*/__pycache__
+__pycache__
+xrt-smi_output.json
+*.csv
+layer_dump
+.claude
+.codex
+src/cpp/build
+AIEDebugLibrary.dll
+*.lst
+*.Identifier

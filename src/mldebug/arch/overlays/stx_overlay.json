@@ -1,0 +1,1145 @@
+{
+  "schema_version": {
+     "major": "1",
+     "minor": "0",
+     "patch": "0"
+  },
+  "overlay_description": {
+     "tiles": [
+        {
+           "column": 0,
+           "row": 1,
+           "type": "MEMORY_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L3",
+                 "dst": "L2"
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "IFM",
+                 "src": "L3",
+                 "dst": "L2"
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L2",
+                 "dst": "L3"
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 1,
+                 "type": "OFM",
+                 "src": "L2",
+                 "dst": "L3"
+              }
+           ]
+        },
+        {
+           "column": 1,
+           "row": 1,
+           "type": "MEMORY_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       0,
+                       2
+                    ],
+                    [
+                       0,
+                       3
+                    ],
+                    [
+                       0,
+                       4
+                    ],
+                    [
+                       0,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 1,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       2
+                    ],
+                    [
+                       1,
+                       3
+                    ],
+                    [
+                       1,
+                       4
+                    ],
+                    [
+                       1,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 2,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       2,
+                       2
+                    ],
+                    [
+                       2,
+                       3
+                    ],
+                    [
+                       2,
+                       4
+                    ],
+                    [
+                       2,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 3,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       2
+                    ],
+                    [
+                       3,
+                       3
+                    ],
+                    [
+                       3,
+                       4
+                    ],
+                    [
+                       3,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       0,
+                       2
+                    ],
+                    [
+                       0,
+                       3
+                    ],
+                    [
+                       0,
+                       4
+                    ],
+                    [
+                       0,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       2
+                    ],
+                    [
+                       1,
+                       3
+                    ],
+                    [
+                       1,
+                       4
+                    ],
+                    [
+                       1,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 2,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       2,
+                       2
+                    ],
+                    [
+                       2,
+                       3
+                    ],
+                    [
+                       2,
+                       4
+                    ],
+                    [
+                       2,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 3,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       3,
+                       2
+                    ],
+                    [
+                       3,
+                       3
+                    ],
+                    [
+                       3,
+                       4
+                    ],
+                    [
+                       3,
+                       5
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 2,
+           "row": 1,
+           "type": "MEMORY_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L3",
+                 "dst": "L2"
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "IFM",
+                 "src": "L3",
+                 "dst": "L2"
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L2",
+                 "dst": "L3"
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 1,
+                 "type": "OFM",
+                 "src": "L2",
+                 "dst": "L3"
+              }
+           ]
+        },
+        {
+           "column": 3,
+           "row": 1,
+           "type": "MEMORY_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       0,
+                       2
+                    ],
+                    [
+                       1,
+                       2
+                    ],
+                    [
+                       3,
+                       2
+                    ],
+                    [
+                       3,
+                       2
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       0,
+                       3
+                    ],
+                    [
+                       1,
+                       3
+                    ],
+                    [
+                       3,
+                       3
+                    ],
+                    [
+                       3,
+                       3
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 2,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       0,
+                       4
+                    ],
+                    [
+                       1,
+                       4
+                    ],
+                    [
+                       3,
+                       4
+                    ],
+                    [
+                       3,
+                       4
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 3,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       0,
+                       5
+                    ],
+                    [
+                       1,
+                       5
+                    ],
+                    [
+                       3,
+                       5
+                    ],
+                    [
+                       3,
+                       5
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "WTS",
+                 "src": "L3",
+                 "dst": "L2"
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L3",
+                 "dst": "L2"
+              }
+           ]
+        },
+        {
+           "column": 0,
+           "row": 2,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 0,
+           "row": 3,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 0,
+           "row": 4,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 0,
+           "row": 5,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 1,
+           "row": 2,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 1,
+           "row": 3,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 1,
+           "row": 4,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 1,
+           "row": 5,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 2,
+           "row": 2,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 2,
+           "row": 3,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 2,
+           "row": 4,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 2,
+           "row": 5,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 3,
+           "row": 2,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 3,
+           "row": 3,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 3,
+           "row": 4,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        },
+        {
+           "column": 3,
+           "row": 5,
+           "type": "CORE_TILE",
+           "dma_connectivity": [
+              {
+                 "direction": "s2mm",
+                 "channel": 0,
+                 "type": "IFM",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "s2mm",
+                 "channel": 1,
+                 "type": "WTS",
+                 "src": "L2",
+                 "dst": "L1",
+                 "connections": [
+                    [
+                       3,
+                       1
+                    ]
+                 ]
+              },
+              {
+                 "direction": "mm2s",
+                 "channel": 0,
+                 "type": "OFM",
+                 "src": "L1",
+                 "dst": "L2",
+                 "connections": [
+                    [
+                       1,
+                       1
+                    ]
+                 ]
+              }
+           ]
+        }
+     ]
+  }
+}

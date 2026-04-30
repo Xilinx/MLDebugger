@@ -1,0 +1,47 @@
+[project]  
+name = "mldebug_xdp"  
+version = "0.1.0"  
+authors = [  
+  {name = "Anurag Dubey", email="anurag.dubey@amd.com"},  
+  {name = "Nishant Mysore"}
+]  
+description = "AIE Debug for VAIML and X2 Designs"  
+readme = "README.md"  
+requires-python = ">=3.10, !=3.11.*, <3.13"
+
+classifiers = [  
+  "Programming Language :: Python :: 3",  
+  "Operating System :: OS Independent",  
+]  
+license = "Apache-2.0"  
+license-files = ["LICENSE"]  
+
+[project.scripts]  
+mldebug = "mldebug.mldebug_cli:app"
+
+[tool.setuptools.package-data]
+mldebug = ["bin/*", "scripts/*", "backend/*.pyd", "backend/*.so", "backend/*.dll", "bin/initial_halt_elfs/**/*.elf"]
+
+[project.urls]
+Homepage = "https://github.com/Xilinx/MLDebugger"
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.0.0",
+    # other dev dependencies
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.ruff]
+line-length = 120
+indent-width = 2
+
+[tool.ruff.format]
+docstring-code-format = true
+

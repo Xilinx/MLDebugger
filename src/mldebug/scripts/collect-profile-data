@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2025-2026 Advanced Micro Devices, Inc. All rights reserved
+# Packages VAIProfile inputs from a hardware run directory into vai_profile.zip (top-level files only).
+# Collects: aie_event_runtime_config_ctx_<id>_run_<id>.json, aie_trace_ctx_*_run_*_inf_*_strm_*.txt,
+# dtrace_dump_ctx*.py, record_timer_ts*.json, record_timer_subgraph_cpu_ts.json.
+# Usage: collect-profile-data <hardware_run_directory>
+# Requires: zip (Info-ZIP) on PATH.
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: collect-profile-data <hardware_run_directory>" >&2
+  exit 1
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  echo "Usage: collect-profile-data <hardware_run_directory>"
+  exit 0
+fi
+
+if [[ $# -ne 1 ]]; then
+  usage
+fi
+
+if ! command -v zip >/dev/null 2>&1; then
+  echo "Error: zip (Info-ZIP) not found on PATH." >&2
+  exit 1
+fi
+
+run_dir=$1
+if [[ ! -d "$run_dir" ]]; then
+  echo "Error: not a directory: $run_dir" >&2
+  exit 1
+fi
+
+root=$(realpath "$run_dir")
+
+shopt -s extglob nullglob
+cd "$root"
+
+files=()
+for f in aie_event_runtime_config*.json; do
+  files+=("$f")
+done
+for f in aie_trace*.txt; do
+  files+=("$f")
+done
+for f in dtrace_dump_ctx*.py; do
+  files+=("$f")
+done
+for f in record_timer_ts*.json; do
+  files+=("$f")
+done
+
+if [[ -f record_timer_subgraph_cpu_ts.json ]]; then
+  files+=(record_timer_subgraph_cpu_ts.json)
+else
+  echo "Warning: record_timer_subgraph_cpu_ts.json not found in ${root}; continuing." >&2
+fi
+
+if ((${#files[@]} == 0)); then
+  echo "Error: no matching profile files found in ${root}" >&2
+  exit 1
+fi
+
+out="${root}/vai_profile.zip"
+rm -f "$out"
+zip -j -q "$out" -- "${files[@]}"
