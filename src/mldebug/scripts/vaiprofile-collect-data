@@ -4,18 +4,18 @@
 # Packages VAIProfile inputs from a hardware run directory into vai_profile.zip (top-level files only).
 # Collects: aie_event_runtime_config_ctx_<id>_run_<id>.json, aie_trace_ctx_*_run_*_inf_*_strm_*.txt,
 # dtrace_dump_ctx*.py, record_timer_ts*.json, record_timer_subgraph_cpu_ts.json.
-# Usage: collect-profile-data <hardware_run_directory>
+# Usage: vaiprofile-collect-data <hardware_run_directory>
 # Requires: zip (Info-ZIP) on PATH.
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: collect-profile-data <hardware_run_directory>" >&2
+  echo "Usage: vaiprofile-collect-data <hardware_run_directory>" >&2
   exit 1
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  echo "Usage: collect-profile-data <hardware_run_directory>"
+  echo "Usage: vaiprofile-collect-data <hardware_run_directory>"
   exit 0
 fi
 
