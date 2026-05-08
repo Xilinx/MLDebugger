@@ -1,0 +1,111 @@
+# Builds an aarch64-only wheel of mldebug_xdp and publishes it as a GitHub release.
+# The aarch64 wheel is produced by post-processing the standard wheel:
+# Windows and x86 Linux binaries are stripped out and the wheel is re-tagged
+# as py3-none-linux_aarch64.
+
+name: MLDebugger Release (aarch64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (Default: v<run_number>-aarch64)'
+        required: false
+        default: ''
+      release_name:
+        description: 'Release name (Default: "Release v<run_number> (aarch64)")'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  GIT_MODE: 1
+
+jobs:
+  build:
+    runs-on: [ build ]
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        clean: true
+        lfs: true
+
+    - name: Pull LFS files
+      run: git lfs pull
+
+    - name: Add uv to PATH
+      run: echo "$(python -m site --user-base)/bin" >> $GITHUB_PATH
+
+    - name: "Set up Python"
+      uses: actions/setup-python@v4
+      with:
+        python-version-file: "pyproject.toml"
+
+    - name: Create and activate virtual environment
+      run: |
+        uv venv
+        source .venv/bin/activate
+
+    - name: Update submodules
+      run: |
+        git submodule update --init --recursive
+        git submodule foreach --recursive 'git lfs pull || true'
+
+    - name: Build base wheel with UV
+      run: |
+        uv build --wheel .
+
+    - name: Build aarch64 wheel
+      run: |
+        uv pip install --system wheel
+        BASE_WHEEL=$(find dist -name "mldebug_xdp-*-py3-none-any.whl" | head -1)
+        if [ -z "$BASE_WHEEL" ]; then
+          echo "No base wheel found in dist/" >&2
+          exit 1
+        fi
+        python scripts/build_aarch64_wheel.py "$BASE_WHEEL" --out-dir dist
+
+    - name: Store aarch64 wheel path
+      id: wheel-path
+      run: |
+        WHEEL_PATH=$(find dist -name "*-linux_aarch64.whl" | head -1)
+        if [ -z "$WHEEL_PATH" ]; then
+          echo "aarch64 wheel not found" >&2
+          exit 1
+        fi
+        echo "wheel_path=$WHEEL_PATH" >> $GITHUB_OUTPUT
+        echo "wheel_name=$(basename $WHEEL_PATH)" >> $GITHUB_OUTPUT
+
+    - name: Resolve release tag and name
+      id: release_meta
+      shell: bash
+      run: |
+        DEFAULT_TAG="v${{ github.run_number }}-aarch64"
+        DEFAULT_NAME="Release v${{ github.run_number }} (aarch64)"
+        TAG="${{ github.event.inputs.release_tag }}"
+        NAME="${{ github.event.inputs.release_name }}"
+        TAG="${TAG:-$DEFAULT_TAG}"
+        NAME="${NAME:-$DEFAULT_NAME}"
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "name=$NAME" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.release_meta.outputs.tag }}
+        release_name: ${{ steps.release_meta.outputs.name }}
+        draft: false
+        prerelease: false
+
+    - name: Upload aarch64 wheel to release
+      run: |
+        gh release upload "${{ steps.release_meta.outputs.tag }}" \
+          "${{ steps.wheel-path.outputs.wheel_path }}" \
+          --clobber
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
