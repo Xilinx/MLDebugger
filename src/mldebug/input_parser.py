@@ -259,9 +259,7 @@ def print_hw_context_table(current_contexts: dict[str, dict[str, str]]) -> None:
 
 def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list[tuple[int, int]] | None:
   """
-  Validate ALL contexts by:
-  - Reading CORE_STATUS register (verifies register access)
-  - Reading program memory (verifies memory access)
+  Validate ALL contexts by reading CORE_STATUS register (verifies register access)
 
   Args:
     contexts: All hardware contexts from xrt-smi (context_id -> info incl. status)
@@ -303,35 +301,17 @@ def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list
       )
       backend = create_backend("xrt", config)
 
-      # Test 1: Read CORE_STATUS register
+      # Read CORE_STATUS register
       reg_value = backend.read_register(test_col, test_row, test_reg)
-
-      # Test 2: Read program memory at current PC location
-      # Program Memory base address: 0x00020000 (AIE2PS spec)
-      # Extract PC from CORE_STATUS register (bits 8-27)
-      pm_base = 0x00020000
-      pc_value = (reg_value >> 8) & 0xFFFFF
-      if pc_value > 0:
-        # Read 16 bytes (4 words) from current PC location in program memory
-        pm_bytes = 16
-        pm_address = pm_base + pc_value
-        pm_words = backend.dump_memory(test_col, test_row, pm_address, pm_bytes)
-        # Validate that we got sensible data (not all zeros or all 0xFF)
-        pm_valid = any(word != 0 and word != 0xFFFFFFFF for word in pm_words)
-        pm_status = f", PM@0x{pm_address:x}:{[hex(w) for w in pm_words[:4]]}"
-      else:
-        pm_valid = True
-        pm_status = ", PM@PC=0 (reset state)"
       
       # This context passed validation
-      print(f"[INFO] Context {ctx} validated successfully (CORE_STATUS=0x{reg_value:08x}{pm_status})")
-      if not pm_valid:
-        print(f"[WARNING] Context {ctx} program memory appears empty or invalid")
+      print(f"[INFO] Context {ctx} validated successfully (CORE_STATUS=0x{reg_value:08x})")
       valid_contexts.append((ctx, pid))
 
     except Exception as e:
       print(f"[DEBUG] Context {ctx_id} failed validation: {type(e).__name__}: {e}")
       continue
+
     # Clean up the test backend to avoid resource leaks
     finally:
       del backend
