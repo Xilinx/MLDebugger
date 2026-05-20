@@ -15,7 +15,7 @@ import os
 import subprocess
 import re
 
-from mldebug.arch import loader, load_aie_arch, AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL
+from mldebug.arch import load_aie_arch, AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL
 from mldebug.backend.core_dump_impl import CoreDumpFallbackReader
 from mldebug.backend.factory import BackendConfig, create_backend
 from mldebug.utils import LOGGER, cleanup_and_exit, input_with_timeout, is_aarch64, is_windows
@@ -269,10 +269,6 @@ def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list
   Returns:
     List of (context_id, pid) tuples that passed validation, or None if none passed.
   """
-  # Load AIE interface if not provided
-  if aie_iface is None:
-    aie_iface = loader.load_aie_arch(device)
-
   # Use first AIE core tile for test read
   # Tile layout: Row 0=Shim, Rows 1 to (OFFSET-1)=Memory, Rows OFFSET+=AIE cores
   # For Telluride: (0, 3), For PHX/STX: (0, 2)
@@ -281,8 +277,6 @@ def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list
 
   # CORE_STATUS register - safe read-only register
   # Device-specific addresses: Telluride=0x38004, PHX/STX=0x32004
-  if "CORE_STATUS" not in aie_iface.Core_registers:
-    raise RuntimeError(f"CORE_STATUS register not defined for device {device}")
   test_reg = aie_iface.Core_registers["CORE_STATUS"]
   test_tiles = [(test_col, test_row)]
   
@@ -301,13 +295,10 @@ def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list
       )
       backend = create_backend("xrt", config)
 
-      # Read CORE_STATUS register
-      reg_value = backend.read_register(test_col, test_row, test_reg)
-      
-      # This context passed validation
-      print(f"[INFO] Context {ctx} validated successfully (CORE_STATUS=0x{reg_value:08x})")
+      backend.read_register(test_col, test_row, test_reg)
       valid_contexts.append((ctx, pid))
 
+    # TODO: catch device-specific errors (e.g. EBUSY from XRT) instead of Exception
     except Exception as e:
       print(f"[DEBUG] Context {ctx_id} failed validation: {type(e).__name__}: {e}")
       continue
@@ -327,11 +318,12 @@ def check_hw_context(args) -> tuple[int, int]:
   Returns (ctx_id, pid) from xrt-smi.
 
   1. If only one context exists, auto-select it.
-  2. If multiple exist, validate all (Active and Idle) with register/program-memory read.
-  3. If no context passes validation, prompt the user (which times out after ``HW_CONTEXT_INPUT_TIMEOUT_S`` seconds and calls ``cleanup_and_exit(args, 1)`` on failure / timeout).
+  2. If multiple exist, validate all (Active and Idle) with a CORE_STATUS register read.
+  3. If no context passes validation, prompt the user (60s timeout; invalid input or timeout
+     calls ``cleanup_and_exit(args, 1)``).
   """
   device = args.device
-  aie_iface = getattr(args, "aie_iface", None)
+  aie_iface = args.aie_iface
   filename = "xrt-smi_output.json"
   use_shell = is_windows()
 
@@ -364,7 +356,6 @@ def check_hw_context(args) -> tuple[int, int]:
     if len(current_contexts) == 1:
       ctx = int(list(current_contexts.keys())[0])
       pid = int(list(current_contexts.values())[0]["pid"])
-      print(f"[INFO] Auto-selected single context: {ctx}")
       return ctx, pid
 
     # Path 2: Multiple contexts found -> validate all with register read test
@@ -373,7 +364,6 @@ def check_hw_context(args) -> tuple[int, int]:
 
     # Path 2a: No contexts passed validation -> prompt user for input
     if valid_contexts is None:
-      print("[WARNING] Could not auto-validate any context. Please select a context manually.")
       print_hw_context_table(current_contexts)
       # Ask user
       selected_context_id = input_with_timeout(
@@ -383,7 +373,6 @@ def check_hw_context(args) -> tuple[int, int]:
       if selected_context_id in current_contexts:
         ctx = int(selected_context_id)
         pid = int(current_contexts[selected_context_id]["pid"])
-        print(f"[INFO] Selected context: {ctx}")
       else:
         LOGGER.log("Could not find the provided context, Exiting now.")
         cleanup_and_exit(args, 1)
@@ -392,25 +381,23 @@ def check_hw_context(args) -> tuple[int, int]:
     # Path 2b: Single valid context found -> auto-select it
     elif len(valid_contexts) == 1:
       ctx, pid = valid_contexts[0]
-      print(f"[INFO] Auto-selected validated context: {ctx}")
       return ctx, pid
 
     # Path 2c: Multiple valid contexts found -> prompt user for input
     else:
       lookup = {str(ctx): (ctx, pid) for ctx, pid in valid_contexts}
-      print(f"[INFO] {len(valid_contexts)} Contexts passed validation: {', '.join(lookup.keys())}")
       valid_ids = set(lookup.keys())
       valid_only = {k: v for k, v in current_contexts.items() if str(k) in valid_ids}
       print_hw_context_table(valid_only)
       # Ask user
       selected_context_id = input_with_timeout(
-        f"{len(valid_contexts)} Contexts passed validation. Please enter the Context ID you want to select: ",
+        f"{len(valid_contexts)} Contexts passed validation. "
+        "Please enter the Context ID you want to select: ",
         HW_CONTEXT_INPUT_TIMEOUT_S,
       )
       if selected_context_id in valid_only:
         ctx = int(selected_context_id)
         pid = int(valid_only[selected_context_id]["pid"])
-        print(f"[INFO] Selected context: {ctx}")
       else:
         LOGGER.log(f"Context ID {selected_context_id} not found. Valid options: {', '.join(valid_only.keys())}")
         cleanup_and_exit(args, 1)
