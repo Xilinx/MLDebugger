@@ -5,9 +5,7 @@
 Manages high level interaction with AIE
 """
 
-import time
-
-from mldebug.utils import LOGGER
+from mldebug.utils import LOGGER, wait_until
 
 
 class AIEUtil:
@@ -159,20 +157,21 @@ class AIEUtil:
     write(reg_map["DEBUG_CONTROL1"], perf_cntr_event << 16)
     self.impl.continue_aie()
     # Step3: Poll all tiles until every PERF_CNTR_1 reaches the specified count.
-    timeout = 10
-    start_time = time.time()
     perf_cntr_1 = reg_map["PERF_CNTR_1"]
-    while True:
-      time.sleep(0.1)
-      values = self.read_aie_regs(perf_cntr_1)
-      if all(v == count for v in values.values()):
-        break
-      if time.time() - start_time > timeout:
-        LOGGER.log(
-          f"{sid}: Timeout waiting for skip {count} iterations across tiles! "
-          f"Design might be hung. Values={values}"
-        )
-        return False
+    last = {}
+
+    def reached():
+      last["values"] = self.read_aie_regs(perf_cntr_1)
+      return all(v == count for v in last["values"].values())
+
+    def on_timeout():
+      LOGGER.log(
+        f"{sid}: Timeout waiting for skip {count} iterations across tiles! "
+        f"Design might be hung. Values={last['values']}"
+      )
+
+    if not wait_until(reached, on_timeout=on_timeout):
+      return False
 
     # Step6: Reset debug control to stop at program counter event
     pc_event = self._get_eventid("PC_0_CORE")
@@ -188,12 +187,7 @@ class AIEUtil:
 
     self.impl.set_pc_breakpoint(lock_acq_pc)
     self.impl.continue_aie()
-    timeout = 10
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-      time.sleep(0.1)
-      if self.impl.poll_core_status():
-        break
+    wait_until(self.impl.poll_core_status)
 
     pcs = self.impl.read_core_pc(True)
     is_valid =  self.pcs_match_target(pcs, lock_acq_pc)

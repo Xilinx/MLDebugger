@@ -248,6 +248,33 @@ def timeit(func):
   return wrapper
 
 
+def wait_until(predicate, *, timeout=10.0, interval=0.1, on_timeout=None):
+  """
+  Poll ``predicate`` until it returns truthy or ``timeout`` seconds elapse.
+
+  Uses ``time.monotonic`` so it is immune to wall-clock jumps.
+
+  Args:
+    predicate (callable): Zero-arg callable returning truthy when done.
+    timeout (float): Max seconds to wait.
+    interval (float): Sleep between polls.
+    on_timeout (callable, optional): Called once if the timeout fires
+      (e.g. to log a diagnostic).
+
+  Returns:
+    bool: True if ``predicate`` became truthy, False on timeout.
+  """
+  start = time.monotonic()
+  while True:
+    time.sleep(interval)
+    if predicate():
+      return True
+    if time.monotonic() - start > timeout:
+      if on_timeout is not None:
+        on_timeout()
+      return False
+
+
 def print_tile_grid(title, tiles, register_values=None, format_type="hex"):
   """
   Prints a grid visualization of tile information and optional register values.

@@ -17,7 +17,7 @@ import time
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from mldebug.utils import LOGGER, cleanup_and_exit, timeit
+from mldebug.utils import LOGGER, cleanup_and_exit, timeit, wait_until
 
 
 class BatchRunner:
@@ -244,14 +244,8 @@ class BatchRunner:
       be.continue_aie()
 
     # Poll stamps until breakpoint is hit
-    timeout = 10
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-      if self.args.backend == "test":
-        break
-      time.sleep(0.1)
-      if all(be.poll_core_status() for be in bes_to_poll):
-        break
+    if self.args.backend != "test":
+      wait_until(lambda: all(be.poll_core_status() for be in bes_to_poll))
 
     # When combo events are used, it takes a few cycles to
     # hit the breakpoint, so pc might have moved
