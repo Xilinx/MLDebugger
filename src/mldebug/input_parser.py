@@ -334,7 +334,7 @@ def check_hw_context(args) -> tuple[int, int]:
   use_shell = is_windows()
 
   # Build xrt-smi command, adding device argument for telluride
-  device_arg = "-d 0000:00:00.0" if device == AIE_DEV_TEL else "-d"
+  device_arg = "-d 0000:00:00.0" if device == AIE_DEV_TEL else ""
   cmd = f"xrt-smi examine -r aie-partitions {device_arg} -f JSON -o {filename} --force".split()
   ctx, pid = (0, 0)
   try:
