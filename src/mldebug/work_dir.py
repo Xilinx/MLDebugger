@@ -264,6 +264,11 @@ class WorkDir:
     Parse work directory and its ELF files to extract function ranges, tail calls,
     global variables, and layer/partition info.
 
+    For batched + stamped designs we only parse one batch's worth of stamps
+    (S replicas) and mirror the parsed data across the remaining batch copies.
+    The same ELF binaries are loaded into the additional batch columns, so
+    the PCs and global addresses are identical.
+
     Args:
         work_dir (str): Path to the AIE work directory.
         overlay: Overlay object for tile mapping.
@@ -275,36 +280,52 @@ class WorkDir:
     if not Path.exists(full_path):
       LOGGER.log(f"[INFO] Work directory {full_path} does not exist.")
       return
-    for stampid in overlay.get_stampids():
-      col, row = overlay.get_first_relative_core_tile(stampid)
+    stamps_per_batch = overlay.get_stamps_per_batch()
+    batches = overlay.get_batch_count()
+    # Parse per-batch stamps once, then mirror across batches below.
+    for s in range(stamps_per_batch):
+      col, row = overlay.get_first_relative_core_tile(s)
       core_name = f"{col}_{row}"
       print(f"Core: {core_name}")
       plist = []
       for elf in full_path.glob(f"{core_name}*"):
         plist.append(elf)
       if len(plist) > 1:
-        self.pm_reload_en[stampid] = True
-        self._parse_aie_runtime_control(work_dir, col, row, stampid)
-      self.aie_functions[stampid] = {}
+        self.pm_reload_en[s] = True
+        self._parse_aie_runtime_control(work_dir, col, row, s)
+      self.aie_functions[s] = {}
 
       # Parse LST
       for p in plist:
         LOGGER.verbose_print(f"[INFO] Process: {p}")
         if not self.peano:
-          success = self._parse_lst_chess(p, stampid)
+          success = self._parse_lst_chess(p, s)
           if not success:
             print(f"[WARNING] Failed to parse LST for {p}. Assuming peano compiler.")
             self.peano = True
         if self.peano:
-          self._parse_lst_llvm(p, stampid)
+          self._parse_lst_llvm(p, s)
 
       # Parse map file to find LCP
       # Only base map file has global variables
       first_elf = full_path / core_name
       if self.peano:
-        self._extract_globals_llvm(first_elf, stampid)
+        self._extract_globals_llvm(first_elf, s)
       else:
-        self._extract_globals_chess(first_elf, stampid)
+        self._extract_globals_chess(first_elf, s)
+
+    # Mirror per-batch data into batch 1..B-1 replica slots so all callers
+    # that index by flat replica id (b*S + s) see consistent data.
+    for b in range(1, batches):
+      for s in range(stamps_per_batch):
+        sid = b * stamps_per_batch + s
+        if sid >= len(self.pm_reload_en):
+          break
+        self.pm_reload_en[sid] = self.pm_reload_en[s]
+        self.aie_functions[sid] = self.aie_functions[s]
+        self.elf_flxmlid_maps[sid] = self.elf_flxmlid_maps[s]
+        self.globals[sid] = self.globals[s]
+        self._stamp_lst_map[sid] = self._stamp_lst_map[s]
 
   def _parse_lst_chess(self, elf, stampid):
     """

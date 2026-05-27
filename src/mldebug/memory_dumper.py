@@ -119,13 +119,8 @@ class MemoryDumper:
       return
 
     overlay = self.design_info.overlay
-    # batch + stamp combination doesn't exist
-    if self.design_info.is_batched():
-      batch = str(sid)
-      suffix = "stamp0"
-    else:
-      batch = "0"
-      suffix = f"stamp{sid}"
+    batch = str(overlay.replica_to_batch(sid))
+    suffix = f"stamp{overlay.replica_to_stamp(sid)}"
 
     for buffer in buffers:
       if buffer.ofm:
@@ -161,9 +156,7 @@ class MemoryDumper:
     if self.args.run_flags.skip_dump or self.args.run_flags.l2_dump_only:
       return
 
-    batch = "0"
-    if self.design_info.is_batched():
-      batch = str(sid)
+    batch = str(self.design_info.overlay.replica_to_batch(sid))
 
     for buffer in buffers:
       if not buffer.l1:

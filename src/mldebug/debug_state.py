@@ -11,24 +11,31 @@ class DebugState:
   Keep Track of debug state
   """
 
-  def __init__(self, layers, stampcount) -> None:
+  def __init__(self, layers, stampcount, stamps_per_batch=1) -> None:
     """
     Initialize the DebugState object.
 
     Args:
       layers (list): The list of layer objects that define the AIE execution steps.
-      stampcount (int): The number of stamps.
+      stampcount (int): The total number of replicas (batches * stamps_per_batch).
+      stamps_per_batch (int): Number of stamps within a single batch (S from
+        the BxSxCxR overlay). Used by get_next_layer_for_stamp to convert a
+        flat replica id into a per-batch stamp index when checking layer
+        participation.
     """
     self.current_layer = -1
     self.cur_it = 1
     self.ofm_ping = True
     self.layers = layers
+    self.stamps_per_batch = stamps_per_batch
     self.manual_breakpoints = []
     # Run AIE to finish without invoking breakpoints
     self.continue_to_finish = False
     self.error = False
     self.break_on_stamp_scheduled = [False for _ in range(stampcount)]
     self.pm_reload = [False for _ in range(stampcount)]
+    # stamps to run in current layer; set at step to layer start
+    self.stamps_to_run = None
 
   def update_layer(self):
     """
@@ -45,11 +52,17 @@ class DebugState:
 
   def get_next_layer_for_stamp(self, stamp_id, idx=0):
     """
-    Find the next layer that includes the specified stamp_id.
+    Find the next layer in which the given replica participates.
+
+    A layer's per-batch stamp count (`stamps_per_batch`) may be smaller than
+    the overlay's S, meaning higher-indexed stamps (within a batch) skip
+    that layer. We map the flat replica id to its per-batch stamp index
+    `s = stamp_id % S` and require `s < layer.stamps_per_batch`.
     """
+    s = stamp_id % self.stamps_per_batch
     for i in range(self.current_layer + idx, len(self.layers)):
       layer = self.layers[i]
-      if stamp_id < len(layer.stamps):
+      if s < getattr(layer, "stamps_per_batch", len(layer.stamps)):
         return layer
     return None
 

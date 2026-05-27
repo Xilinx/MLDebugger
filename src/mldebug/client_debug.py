@@ -60,7 +60,11 @@ class ClientDebug:
 
     try:
       self.design_info = LayerInfo(args)
-      self.state = DebugState(self.design_info.layers, self.design_info.overlay.get_stampcount())
+      self.state = DebugState(
+        self.design_info.layers,
+        self.design_info.overlay.get_stampcount(),
+        stamps_per_batch=self.design_info.overlay.get_stamps_per_batch(),
+      )
     except Exception as err:
       if debug_server:
         print("[INFO] closing debug server.")
