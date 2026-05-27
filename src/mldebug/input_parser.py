@@ -160,6 +160,10 @@ def check_registry_keys(args, npu3=False) -> None:
   else:
     items_to_check = [
       ("SYSTEM\\ControlSet001\\Services\\Npu2McdmDriver", "AieMemoryReadWriteEnable", 1),
+      ("SYSTEM\\ControlSet001\\Services\\Npu2McdmDriver", "CertTimeoutMs", 4294967295),
+      ("SYSTEM\\ControlSet001\\Services\\Npu2McdmDriver", "CtxHysteresisTimeoutUs", 4294967280),
+      ("SYSTEM\\ControlSet001\\Services\\Npu2McdmDriver", "InfiniteTimeoutEnable", 4294967280),
+      ("SYSTEM\\ControlSet001\\Services\\Npu2McdmDriver", "PowerManagementEnable", 0),
       ("SYSTEM\\ControlSet001\\Control\\GraphicsDrivers", "TdrDelay", 10000),
     ]
   modified = False
