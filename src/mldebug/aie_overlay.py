@@ -35,7 +35,7 @@ class Overlay:
     self.aie_iface = args.aie_iface
     self.stamps = {}
     self.impls = {}
-    self.layout = self._get_layout(args.overlay, layout)
+    self.layout = self._get_layout(args.overlay, layout, args.run_flags.multistamp)
 
     batches, stamps_per_batch, ncol, nrow = self.layout
     for b in range(batches):
@@ -48,7 +48,7 @@ class Overlay:
             tiles.append((col, row))
         self.stamps[replica_id] = tiles
 
-  def _get_layout(self, args_overlay, layout):
+  def _get_layout(self, args_overlay, layout, is_multistamp):
     """
     Determine the overlay layout parameters as (batches, stamps, ncol, nrow).
 
@@ -78,7 +78,12 @@ class Overlay:
       elif len(layout) == 3:
         # Legacy form: [stamps, R, C]; batches encoded by caller into stamps
         stamps_per_batch, nrow, ncol = layout
+
+    if not is_multistamp:
+      batches, stamps_per_batch = (1,1)
+
     print("[INFO] Using Layout: ", batches, stamps_per_batch, ncol, nrow)
+
     return batches, stamps_per_batch, ncol, nrow
 
   def get_first_relative_core_tile(self, stamp_id=0):

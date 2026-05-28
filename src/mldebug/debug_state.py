@@ -35,7 +35,7 @@ class DebugState:
     self.break_on_stamp_scheduled = [False for _ in range(stampcount)]
     self.pm_reload = [False for _ in range(stampcount)]
     # stamps to run in current layer; set at step to layer start
-    self.stamps_to_run = None
+    self.active_stamps_all_batches = None
 
   def update_layer(self):
     """

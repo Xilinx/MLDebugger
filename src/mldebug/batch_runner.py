@@ -215,7 +215,7 @@ class BatchRunner:
 
     bes_to_poll = []
     bes_to_run = []
-    stamps_to_run = []
+    active_stamps_all_batches = []
     # Per-batch leftmost stamps (sid 0 within each batch) always have their
     # breakpoint scheduled on next_layer. The remaining stamps may early-arm
     # a breakpoint for a *future* layer they actually participate in.
@@ -248,7 +248,7 @@ class BatchRunner:
       bes_to_run.append(self.impls[sid])
       if target_layer.layer_order == next_layer.layer_order:
         bes_to_poll.append(self.impls[sid])
-        stamps_to_run.append((sid, pml, stamp))
+        active_stamps_all_batches.append((sid, pml, stamp))
 
     # Run stamps at exact same time
     for be in bes_to_run:
@@ -261,7 +261,7 @@ class BatchRunner:
     # Now check that breakpoints were hit at the right PC for each stamp
     # that actually targets next_layer. When combo events are used the PC
     # may have moved by a few cycles past the start_pc.
-    for sid, pml, stamp in stamps_to_run:
+    for sid, pml, stamp in active_stamps_all_batches:
       pcs = self.impls[sid].read_core_pc(True)
       utl = self.aie_utls[sid]
       is_correct_pc = utl.pcs_match_target(pcs, stamp.start_pc, allow_combo_delay=pml)
@@ -274,15 +274,11 @@ class BatchRunner:
       if pml:
         self.impls[sid].enable_pc_halt()
         self.state.pm_reload[sid] = False
-      # Breakpoint has now been observed for this stamp; clear the
-      # "already scheduled" guard so the next outer-loop layer can arm
-      # it normally. For stamps whose target_layer is *not* yet this
-      # next_layer (early-armed for a future target), the flag stays
-      # True - preventing re-arm/continue while we walk past.
+      # Breakpoint has now been observed for this stamp;
       self.state.break_on_stamp_scheduled[sid] = False
 
     # Save for run_layer to consume.
-    self.state.stamps_to_run = stamps_to_run
+    self.state.active_stamps_all_batches = active_stamps_all_batches
 
   # ------------------------------------------------------------------ #
   # Core execution primitives (shared by batch and interactive)
@@ -397,7 +393,7 @@ class BatchRunner:
       cur_it: Starting iteration number (default 1).
 
     Returns:
-      True on success, False on error.
+      Success or error.
     """
     stamp = layer.get_stamp(sid)
     utl = self.aie_utls[sid]
@@ -443,31 +439,20 @@ class BatchRunner:
     if not cur_it:
       cur_it = 1
 
-    # stamps_to_run is set by schedule_layer_start. When run_layer is
-    # called from contexts that did not go through schedule_layer_start
-    # (e.g. interactive step within a layer), fall back to every replica
-    # that participates in the layer.
-    stamps_to_run = self.state.stamps_to_run
-    if not stamps_to_run:
-      stamps_to_run = [(sid, False, layer.get_stamp(sid)) for sid in range(len(self.impls))
-                       if sid < layer.num_batches * layer.stamps_per_batch]
-    n_stamp = max(len(stamps_to_run), 1)
+    # active_stamps_all_batches is determined by schedule_layer_start
+    stamps = self.state.active_stamps_all_batches
 
-    with ThreadPoolExecutor(max_workers=n_stamp) as executor:
+    with ThreadPoolExecutor(max_workers=len(stamps)) as executor:
       futures = [
         executor.submit(self._run_stamp, layer, sid, target_itr, cur_it)
-        for sid, _pml, _stamp in stamps_to_run
+        for sid, _pml, _stamp in stamps
       ]
       for f in as_completed(futures):
         res = f.result()
         if not res:
           self.state.error = True
 
-    # At final iteration of a multistamp layer, drain replicas that have
-    # no remaining future layer so they don't sit halted at their last
-    # breakpoint. Leftmost-of-each-batch replicas always participate in
-    # the next layer (handled by schedule_layer_start), so only release
-    # the non-leftmost ones when they have no further layer to run.
+    # Unhalt right replicas that have no remaining future layer
     overlay = self.design_info.overlay
     total_replicas = len(self.state.pm_reload)
     if total_replicas > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):
@@ -499,7 +484,7 @@ class BatchRunner:
                  f" stamps: {len(layer.stamps)}, iters {layer.lcp.num_iter}")
       self.schedule_layer_start(layer)
       self.run_layer(layer)
-      for sid in range(len(self.state.pm_reload)):
+      for sid, _ in enumerate(self.state.pm_reload):
         self.state.pm_reload[sid] = self.check_pm_reload(sid)
 
     for sid in overlay.get_stampids():
