@@ -432,6 +432,8 @@ class BatchRunner:
     overlay = self.design_info.overlay
     total_replicas = len(self.state.pm_reload)
     if total_replicas > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):
+      for sid, _pml, _stamp in stamps:
+        self.state.break_on_stamp_scheduled[sid] = False
       for sid in range(total_replicas):
         if overlay.is_leftmost_in_batch(sid):
           continue

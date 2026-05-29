@@ -16,12 +16,9 @@ class DebugState:
     Initialize the DebugState object.
 
     Args:
-      layers (list): The list of layer objects that define the AIE execution steps.
-      stampcount (int): The total number of replicas (batches * stamps_per_batch).
-      stamps_per_batch (int): Number of stamps within a single batch (S from
-        the BxSxCxR overlay). Used by get_next_layer_for_stamp to convert a
-        flat replica id into a per-batch stamp index when checking layer
-        participation.
+      layers (list): In order BE layer list
+      stampcount (int): Number of replicas (batches * stamps_per_batch).
+      stamps_per_batch (int): Number of stamps within a single batch (S from BxSxCxR).
     """
     self.current_layer = -1
     self.cur_it = 1
