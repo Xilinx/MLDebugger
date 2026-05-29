@@ -123,9 +123,7 @@ class ClientDebug:
     inactive_tiles = self.design_info.overlay.get_inactive_tiles()
     if not inactive_tiles:
       return
-    AIEUtil(
-      self.args.aie_iface, self.impls[0], inactive_tiles, self.design_info.work_dir.globals[0]
-    ).initialize_stamp()
+    self.aie_utls[0].initialize_stamp(inactive_tiles)
     LOGGER.log("[INFO] Using single stamp control. Please use multistamp flag for more data.")
 
   # --- Batch mode delegation ---
@@ -310,10 +308,7 @@ class ClientDebug:
     For stamps with index > 1, initialize the stamp and continue execution.
     """
     self.impls[0].enable_pc_halt()
-    for sid, impl in enumerate(self.impls):
-      if sid > 0:
-        self.aie_utls[sid].initialize_stamp()
-        impl.continue_aie()
+    self._quiesce_inactive_stamps()
 
   def wreg_stamp(self, offset, val, sid=0):
     """

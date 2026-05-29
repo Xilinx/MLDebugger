@@ -465,7 +465,7 @@ class BatchRunner:
 
     for sid in overlay.get_stampids():
       self.aie_utls[sid].initialize_stamp()
-      self.impls[sid].continue_aie()
+
     LOGGER.log("\nFinished Execution")
     self._handle_fsp()
     self._write_run_summary("SUCCESS")

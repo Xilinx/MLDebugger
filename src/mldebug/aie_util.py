@@ -277,12 +277,16 @@ class AIEUtil:
       for c, r in self._filter_tiles(self.aie_iface.MEM_TILE_T)
     }
 
-  def initialize_stamp(self):
+  def initialize_stamp(self, tiles=None):
     """
-    Initialize and clear DEBUG_CONTROL1 and DEBUG_CONTROL0 registers for all AIE tiles
-    belonging to the overlay instance (usually at the start of execution for multi-stamp).
+    Clear DEBUG_CONTROL1 unhalt specified tiles.
+
+    Args:
+      tiles (list[tuple], optional): (col, row) tiles to clear. Default: this stamp's tiles.
     """
-    for c, r in self._filter_tiles(self.aie_iface.AIE_TILE_T):
+    if tiles is None:
+      tiles = self.tiles
+    for c, r in self.aie_iface.filter_tiles(self.aie_iface.AIE_TILE_T, tiles):
       self.impl.write_register(c, r, self.aie_iface.Core_registers["DEBUG_CONTROL1"], 0)
       self.impl.write_register(c, r, self.aie_iface.Core_registers["DEBUG_CONTROL0"], 0)
 
