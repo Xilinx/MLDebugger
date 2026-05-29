@@ -35,9 +35,9 @@ class Overlay:
     self.aie_iface = args.aie_iface
     self.stamps = {}
     self.impls = {}
-    self.layout = self._get_layout(args.overlay, layout, args.run_flags.multistamp)
+    batches, stamps_per_batch, ncol, nrow = self._get_layout(args.overlay, layout)
 
-    batches, stamps_per_batch, ncol, nrow = self.layout
+    # Materialize tiles for every physical replica so dropped ones stay quiescible.
     for b in range(batches):
       for s in range(stamps_per_batch):
         replica_id = b * stamps_per_batch + s
@@ -48,7 +48,14 @@ class Overlay:
             tiles.append((col, row))
         self.stamps[replica_id] = tiles
 
-  def _get_layout(self, args_overlay, layout, is_multistamp):
+    # Without `multistamp`, collapse to one active replica so LayerInfo/DebugState/
+    # backends size to it; extras stay in self.stamps (see get_inactive_tiles).
+    if args.run_flags.multistamp:
+      self.layout = (batches, stamps_per_batch, ncol, nrow)
+    else:
+      self.layout = (1, 1, ncol, nrow)
+
+  def _get_layout(self, args_overlay, layout):
     """
     Determine the overlay layout parameters as (batches, stamps, ncol, nrow).
 
@@ -79,9 +86,6 @@ class Overlay:
         # Legacy form: [stamps, R, C]; batches encoded by caller into stamps
         stamps_per_batch, nrow, ncol = layout
 
-    if not is_multistamp:
-      batches, stamps_per_batch = (1,1)
-
     print("[INFO] Using Layout: ", batches, stamps_per_batch, ncol, nrow)
 
     return batches, stamps_per_batch, ncol, nrow
@@ -108,8 +112,7 @@ class Overlay:
       tile_type (str, optional): Tile type identifier for filtering. If None,
         returns all tile positions.
       stamp_id (int, optional): Replica id to filter tiles by. Defaults to 0.
-      raw (bool, optional): If True, return all tile positions for all
-        replicas, unfiltered.
+      raw (bool, optional): Return all tiles for all replicas
 
     Returns:
       list[tuple]: List of (column, row) tile coordinates corresponding to
@@ -117,8 +120,8 @@ class Overlay:
     """
     tile_list = []
     if raw:
-      for stamp in self.stamps.values():
-        tile_list.extend(stamp)
+      for sid in self.get_stampids():
+        tile_list.extend(self.stamps[sid])
     else:
       tile_list = self.stamps[stamp_id]
     if not tile_type:
@@ -127,12 +130,25 @@ class Overlay:
 
   def get_stampids(self):
     """
-    Get a list of all configured replica ids in the overlay.
+    Get a list of the active replica ids. In single-stamp mode: [0];
 
     Returns:
       list[int]: List of integer replica ids (length = batches * stamps).
     """
-    return list(self.stamps.keys())
+    return list(range(self.get_replica_count()))
+
+  def get_inactive_tiles(self):
+    """
+    Tiles for physical replicas that exist in the design but fall outside the
+    active view (every replica beyond replica 0 when multistamp is disabled).
+
+    Returns:
+      list[tuple]: (column, row) tiles to be quiesced. Empty in multistamp mode.
+    """
+    tiles = []
+    for sid in range(self.get_replica_count(), len(self.stamps)):
+      tiles.extend(self.stamps[sid])
+    return tiles
 
   def get_replica_count(self):
     """

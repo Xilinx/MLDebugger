@@ -57,33 +57,9 @@ class BatchRunner:
 
   def common_init(self):
     """
-    Common initialization for batch and interactive modes.
-
-    Collapses to a single replica (batch 0, stamp 0) when the `multistamp`
-    flag is not set, enables PC halt for all replicas, and initializes
-    skip-iteration support.
+    Enable PC halt and skip-iteration support for each active replica. The
+    single-stamp collapse is handled up front by the Overlay.
     """
-    if not self.args.run_flags.multistamp and self.design_info.overlay.get_stampcount() > 1:
-      for layer in self.design_info.layers:
-        layer.stamps[:] = layer.stamps[:1]
-        layer.stamps_per_batch = 1
-        layer.num_batches = 1
-      for u in self.aie_utls[1:]:
-        u.initialize_stamp()
-      # In-place list modification so all holders of these references see the change
-      del self.aie_utls[1:]
-      del self.impls[1:]
-      # Drop both batch and stamp dims to 1, keeping (C, R) intact.
-      _, _, ncol, nrow = self.design_info.overlay.layout
-      self.design_info.overlay.layout = (1, 1, ncol, nrow)
-      self.design_info.overlay.stamps = {0: self.design_info.overlay.stamps[0]}
-      # Keep DebugState in sync with the collapsed view so per-batch helpers
-      # behave correctly (S=1 makes every replica leftmost-in-batch).
-      self.state.stamps_per_batch = 1
-      self.design_info.num_batches = 1
-      self.design_info.num_stamps = 1
-      LOGGER.log("[INFO] Using single stamp control. Please use multistamp flag for more data.")
-
     for sid in self.design_info.overlay.get_stampids():
       self.impls[sid].enable_pc_halt()
       if self.args.run_flags.skip_iter:
