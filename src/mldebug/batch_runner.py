@@ -207,22 +207,28 @@ class BatchRunner:
     # Step to layer 3 : step to all 3 stamps
     for sid, pml in enumerate(self.state.pm_reload):
       target_layer = stamp_target_layers.get(sid)
-      is_leftmost = overlay.is_leftmost_in_batch(sid)
-      if not target_layer or (not is_leftmost and self.state.break_on_stamp_scheduled[sid]):
+      if not target_layer:
         continue
-      self.state.break_on_stamp_scheduled[sid] = True
-      if pml:
-        if target_layer.layer_order != next_layer.layer_order:
-          LOGGER.log(
-            f"\nArming PM RELOAD on stamp {sid} for Layer_{target_layer.layer_order} "
-          )
-        else:
-          LOGGER.log(f"\nPM RELOAD on stamp: {sid}")
+      is_leftmost = overlay.is_leftmost_in_batch(sid)
+      reaches_now = target_layer.layer_order == next_layer.layer_order
+      already_armed = not is_leftmost and self.state.break_on_stamp_scheduled[sid]
       stamp = target_layer.get_stamp(sid)
-      skip_end_pc = not (self.args.run_flags.l1_ofm_dump and stamp.end_pc)
-      self._set_layer_breakpoint(target_layer, skip_end_pc, sid, pml)
-      bes_to_run.append(self.impls[sid])
-      if target_layer.layer_order == next_layer.layer_order:
+
+      if not already_armed:
+        self.state.break_on_stamp_scheduled[sid] = True
+        if pml:
+          if not reaches_now:
+            LOGGER.log(
+              f"\nArming PM RELOAD on stamp {sid} for Layer_{target_layer.layer_order} "
+            )
+          else:
+            LOGGER.log(f"\nPM RELOAD on stamp: {sid}")
+        skip_end_pc = not (self.args.run_flags.l1_ofm_dump and stamp.end_pc)
+        self._set_layer_breakpoint(target_layer, skip_end_pc, sid, pml)
+        bes_to_run.append(self.impls[sid])
+
+      # We have reached previously scheduled breakpoint
+      if reaches_now:
         bes_to_poll.append(self.impls[sid])
         active_stamps_all_batches.append((sid, pml, stamp))
 
@@ -432,8 +438,6 @@ class BatchRunner:
     overlay = self.design_info.overlay
     total_replicas = len(self.state.pm_reload)
     if total_replicas > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):
-      for sid, _pml, _stamp in stamps:
-        self.state.break_on_stamp_scheduled[sid] = False
       for sid in range(total_replicas):
         if overlay.is_leftmost_in_batch(sid):
           continue
