@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2025-2026 Advanced Micro Devices, Inc. All rights reserved
-# Packages VAIProfile inputs from a hardware run directory into vai_profile.zip (top-level files only).
+# Packages VAIProfile inputs from a hardware run directory into vai_profile.zip (top-level files only),
+# then moves collected files into vai_profile_data (or vai_profile_data_<n> if the name exists).
 # Collects: aie_event_runtime_config_ctx_<id>_run_<id>.json, aie_trace_ctx_*_run_*_inf_*_strm_*.txt,
-# dtrace_dump_ctx*.py, record_timer_ts*.json, record_timer_subgraph_cpu_ts.json.
+# dtrace_dump_ctx*.py, record_timer_*.json (incl. record_timer_inference_*, record_timer_ts*, etc.),
+# onnxruntime_profile_*.json.
+# vai_profile.zip remains at the run directory root.
 # Usage: vaiprofile-collect-data <hardware_run_directory>
 # Requires: zip (Info-ZIP) on PATH.
 
@@ -49,13 +52,14 @@ done
 for f in dtrace_dump_ctx*.py; do
   files+=("$f")
 done
-for f in record_timer_ts*.json; do
+for f in record_timer_*.json; do
+  files+=("$f")
+done
+for f in onnxruntime_profile_*.json; do
   files+=("$f")
 done
 
-if [[ -f record_timer_subgraph_cpu_ts.json ]]; then
-  files+=(record_timer_subgraph_cpu_ts.json)
-else
+if [[ ! -f record_timer_subgraph_cpu_ts.json ]]; then
   echo "Warning: record_timer_subgraph_cpu_ts.json not found in ${root}; continuing." >&2
 fi
 
@@ -67,3 +71,14 @@ fi
 out="${root}/vai_profile.zip"
 rm -f "$out"
 zip -j -q "$out" -- "${files[@]}"
+
+profile_dir="${root}/vai_profile_data"
+if [[ -e "$profile_dir" ]]; then
+  n=1
+  while [[ -e "${root}/vai_profile_data_${n}" ]]; do
+    ((n++)) || true
+  done
+  profile_dir="${root}/vai_profile_data_${n}"
+fi
+mkdir -p "$profile_dir"
+mv -- "${files[@]}" "$profile_dir/"
