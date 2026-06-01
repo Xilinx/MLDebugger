@@ -78,7 +78,7 @@ class WorkDir:
   Abstraction for AIE Work Directory
   """
 
-  def __init__(self, aie_dir, peano, overlay, dump_lst=False):
+  def __init__(self, aie_dir, peano, overlay, arch_name,  dump_lst=False):
     """
     Initialize the AIE Work Directory abstraction. Sets up internal state and parses functions.
     Args:
@@ -95,7 +95,6 @@ class WorkDir:
     self.globals = [None] * num_stamps
     self.peano = peano
     self.aie_dir = aie_dir
-    self.dump_lst = dump_lst
     # Lock acquire instruction PC after layer execution
     # This pc can be used for skip_iter
     self.post_layer_lock_acq_pcs = [0] * num_stamps
@@ -104,7 +103,7 @@ class WorkDir:
     for sid in range(num_stamps):
       self._stamp_lst_map[sid] = []
 
-    self._initialize_functions(aie_dir, overlay)
+    self._initialize_functions(aie_dir, overlay, arch_name, dump_lst)
 
   def _check_for_lock_acq(self, line, sid, llvm):
     """
@@ -165,34 +164,34 @@ class WorkDir:
             elf_layer_map[par].append(layeridx)
     self.elf_flxmlid_maps[stampid] = elf_layer_map
 
-  def _get_lst(self, elf_path, elf_name):
+  def _get_lst(self, elf_path, elf_name, arch_name, dump_lst):
     """
     Generate and fetch a disassembly listing (lst) for an ELF file using llvm-objdump.
 
     Args:
         elf_path (str): Path to the ELF binary.
         elf_name (str): Base ELF file name (stem).
+        arch_name (str): Target architecture name passed to llvm-objdump.
+        dump_lst (bool): Whether to write the output listing to disk.
 
     Returns:
         str: Decoded assembly listing as text.
     Side effects:
-        If self.dump_lst is True, writes the output listing to disk.
+        If dump_lst is True, writes the output listing to disk.
     """
     lst_data = ""
     exe = "llvm-objdump.elf"
-    archname = "aie2p"
     if is_windows():
       exe = "llvm-objdump.exe"
     elif is_aarch64():
       exe = "llvm-objdump.aarch64"
-      archname = "aie2ps"
     with resources.as_file(resources.files("mldebug") / "bin" / exe) as objdump_path:
       lst = subprocess.check_output(
-        [str(objdump_path), "-d", "-z", "--no-show-raw-insn", f"--arch-name={archname}", "-C", elf_path]
+        [str(objdump_path), "-d", "-z", "--no-show-raw-insn", f"--arch-name={arch_name}", "-C", elf_path]
       )
       lst_data = lst.decode("utf-8")
 
-    if self.dump_lst:
+    if dump_lst:
       fname = elf_name + ".lst"
       print("Writing assembly listing to:", fname)
       with open(fname, "w", encoding="utf8") as fd:
@@ -259,7 +258,7 @@ class WorkDir:
         return False
     return True
 
-  def _initialize_functions(self, work_dir, overlay):
+  def _initialize_functions(self, work_dir, overlay, arch_name, dump_lst):
     """
     Parse work directory and its ELF files to extract function ranges, tail calls,
     global variables, and layer/partition info.
@@ -272,6 +271,8 @@ class WorkDir:
     Args:
         work_dir (str): Path to the AIE work directory.
         overlay: Overlay object for tile mapping.
+        arch_name (str): Target architecture name passed to llvm-objdump.
+        dump_lst (bool): Whether to write disassembly listings to disk.
     Side effects:
         Populates aie_functions, pm_reload_en, globals, elf_flxmlid_maps.
     """
@@ -304,7 +305,7 @@ class WorkDir:
             print(f"[WARNING] Failed to parse LST for {p}. Assuming peano compiler.")
             self.peano = True
         if self.peano:
-          self._parse_lst_llvm(p, s)
+          self._parse_lst_llvm(p, s, arch_name, dump_lst)
 
       # Parse map file to find LCP
       # Only base map file has global variables
@@ -530,7 +531,7 @@ class WorkDir:
       _extract_var(lines, "lcpPing")
       _extract_var(lines, "lcpPong")
 
-  def _parse_lst_llvm(self, elf, stampid):
+  def _parse_lst_llvm(self, elf, stampid, arch_name, dump_lst):
     """
     Parse LLVM-based LST disassembly to extract functions, boundaries,
     final lock release instructions, and tail call status.
@@ -538,13 +539,15 @@ class WorkDir:
     Args:
         elf (Path): Path object for the ELF file directory.
         stampid (int): Index into aie_functions.
+        arch_name (str): Target architecture name passed to llvm-objdump.
+        dump_lst (bool): Whether to write disassembly listings to disk.
     Side effects:
         Populates self.aie_functions[stampid][elf_name] with AIEFunction objects.
     """
     elf_name = elf.stem
     elf_path = f"{elf}/Release/{elf.stem}"
-    data = self._get_lst(elf_path, elf_name)
-    self._stamp_lst_map[stampid].append((elf_name, self._get_lst(elf_path, elf_name)))
+    data = self._get_lst(elf_path, elf_name, arch_name, dump_lst)
+    self._stamp_lst_map[stampid].append((elf_name, data))
     lines = data.split("\n")
 
     is_base = "reloadable" not in elf_name

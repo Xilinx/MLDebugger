@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (C) 2024-2025 Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (C) 2024-2026 Advanced Micro Devices, Inc. All rights reserved.
 
 """
 AIE2/AIE2P Specific Defs
@@ -11,6 +11,8 @@ AIE_TILE_T = "aie_tile"
 SHIM_TILE_T = "shim_tile"
 MEM_TILE_T = "mem_tile"
 TILE_TYPES = [AIE_TILE_T, SHIM_TILE_T, MEM_TILE_T]
+
+ARCH_NAME = "aie2p"
 
 AIE_TILE_ROW_OFFSET = 2
 MEM_TILE_SZ = 0x80000
