@@ -281,15 +281,13 @@ class Layer:
 
     # Fill missing TG metadata from mladf report
     if self.lcp.is_tg:
-      for s, stamp in enumerate(self.stamps):
-        sk_name = mladf_report.get_skname_for_bilo(self.layer_order, s)
-        elf_name = mladf_report.get_elfid_for_bilo(self.layer_order, s)
-        if not sk_name or elf_name == -1 or any(k in sk_name for k in unsupported_superkernels):
-          LOGGER.verbose_print(f"[WARNING] unsupported kernel {sk_name} at Layer {self.layer_order} will be skipped.")
+      for sid, stamp in enumerate(self.stamps):
+        stamp.name = mladf_report.get_skname_for_bilo(self.layer_order, sid)
+        stamp.elf_name = mladf_report.get_elfid_for_bilo(self.layer_order, sid)
+        if not stamp.name or stamp.elf_name == -1 or any(k in stamp.name for k in unsupported_superkernels):
+          LOGGER.verbose_print(f"[WARNING] unsupported kernel {stamp.name} at Layer {self.layer_order} will be skipped.")
           self.is_unsupported = True
           return
-        stamp.name = sk_name
-        stamp.elf_name = elf_name
       self.lcp.num_iter = mladf_report._get_iters_for_bilo(self.layer_order)
 
     self._initialize_l3_buffers(info, version)
@@ -863,15 +861,14 @@ class LayerInfo:
     self.layers = [layer for layer in self.layers if not layer.lcp.is_tg]
     if not self.layers:
       raise RuntimeError("No layers found in the design.")
-    # Resolve PCs once per per-batch stamp index. Batches share the same
-    # ELF/PCs so no mirroring is needed on the Layer's stamps list.
-    for s in range(self.num_stamps):
+    # Resolve PCs once per stamp
+    for sid in range(self.num_stamps):
       for layer in self.layers:
-        flist = list(self.layer_workdir_map[layer.layer_order].aie_functions[s].values())[0]
-        self.layer_workdir_map[layer.layer_order].pm_reload_en[s] = True
+        flist = list(self.layer_workdir_map[layer.layer_order].aie_functions[sid].values())[0]
+        self.layer_workdir_map[layer.layer_order].pm_reload_en[sid] = True
         for f in flist:
-          if _strip_template(layer.stamps[s].name.lower()) == _strip_template(f.name.lower()):
-            stamp = layer.stamps[s]
+          if _strip_template(layer.stamps[sid].name.lower()) == _strip_template(f.name.lower()):
+            stamp = layer.stamps[sid]
             LOGGER.verbose_print("Layer found:", layer.layer_order, stamp.name, f.start_pc)
             stamp.elf_name = layer.pm_work_dir
             stamp.start_pc = f.start_pc
@@ -906,18 +903,17 @@ class LayerInfo:
     # Hierarchy of Data:
     # Stamp <- Elf <- Layers
     # AIECompiler only knows flexmlIDs so we use that to match with correct layer
-    # Resolve PCs once per per-batch stamp index (s). Batch copies share
-    # the same ELFs and PCs so no extra resolution is needed.
-    for s in range(self.num_stamps):
-      has_pm_reload = self.work_dir.pm_reload_en[s]
-      for elf_name, flist in self.work_dir.aie_functions[s].items():
-        LOGGER.verbose_print(f"Initializing layers for stamp {s} ELF: {elf_name}")
+    # Resolve PCs once per stamp index (sid).
+    for sid in range(self.num_stamps):
+      has_pm_reload = self.work_dir.pm_reload_en[sid]
+      for elf_name, flist in self.work_dir.aie_functions[sid].items():
+        LOGGER.verbose_print(f"Initializing layers for stamp {sid} ELF: {elf_name}")
         elf_id = elf_name.split("reloadable")[-1]
         for f, l in itertools.product(flist, self.layers):
-          if s > len(l.stamps) - 1:
+          if sid > len(l.stamps) - 1:
             continue
-          if _strip_template(l.stamps[s].name.lower()) == _strip_template(f.name.lower()):
-            stamp = l.stamps[s]
+          if _strip_template(l.stamps[sid].name.lower()) == _strip_template(f.name.lower()):
+            stamp = l.stamps[sid]
             if l.lcp.is_tg and stamp.elf_name == elf_id:
               stamp.start_pc = f.start_pc
               if f.name.lower() not in skip_end_pc_kernels:
@@ -925,7 +921,7 @@ class LayerInfo:
               continue
             # Check if this layer is present in the elf
             # In buffer_info the flexml_ids might not be in order of stamps
-            if has_pm_reload and not any(i in self.work_dir.elf_flxmlid_maps[s][elf_id] for i in l.flexml_ids):
+            if has_pm_reload and not any(i in self.work_dir.elf_flxmlid_maps[sid][elf_id] for i in l.flexml_ids):
               continue
             LOGGER.verbose_print("Layer found:", l.layer_order, stamp.name)
             stamp.elf_name = elf_id
