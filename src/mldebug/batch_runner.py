@@ -135,7 +135,7 @@ class BatchRunner:
       True if program memory reload will occur at the next layer, False otherwise.
     """
     layer = self.state.layers[self.state.current_layer]
-    if not self.design_info.work_dir.pm_reload_en[stamp_id] or self.state.current_layer + 1 >= len(self.state.layers):
+    if not self.design_info.work_dir.stamp(stamp_id).pm_reload_en or self.state.current_layer + 1 >= len(self.state.layers):
       return False
 
     if self.design_info.overlay.is_leftmost_in_batch(stamp_id):
@@ -388,7 +388,7 @@ class BatchRunner:
       self.state.error = not utl.skip_iterations(target_itr - cur_it, sid)
     elif self.args.run_flags.skip_iter2:
       self.state.error = not utl.skip_iterations_to_lock_acq(
-         self.design_info.work_dir.post_layer_lock_acq_pcs[sid], target_itr - cur_it, sid)
+         self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc, target_itr - cur_it, sid)
     else:
       while cur_it < target_itr:
         self.hit_next_breakpoint(sid)

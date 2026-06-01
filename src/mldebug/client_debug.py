@@ -86,7 +86,7 @@ class ClientDebug:
       self.impls.append(impl)
       self.aie_utls.append(
         AIEUtil(
-          args.aie_iface, impl, self.design_info.overlay.get_tiles(stamp_id=i), self.design_info.work_dir.globals[i]
+          args.aie_iface, impl, self.design_info.overlay.get_tiles(stamp_id=i), self.design_info.work_dir.stamp(i).globals
         )
       )
 

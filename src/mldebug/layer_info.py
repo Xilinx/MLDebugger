@@ -607,7 +607,7 @@ class LayerInfo:
     sep = "--------------------------------------------"
     m = "Design info (Excluding TG Layer IDs)\n"
     m += f"{sep}\nFlexml Layer Count: {len(self.layers)}\n{sep}"
-    if not self.work_dir.elf_flxmlid_maps or not self.layers:
+    if not self.work_dir.stamps or not self.layers:
       return
     for sid, imap in info.items():
       m += f"\nStamp {sid}: "
@@ -860,8 +860,8 @@ class LayerInfo:
     # Resolve PCs once per stamp
     for sid in range(self.overlay.get_stamps_per_batch()):
       for layer in self.layers:
-        flist = list(self.layer_workdir_map[layer.layer_order].aie_functions[sid].values())[0]
-        self.layer_workdir_map[layer.layer_order].pm_reload_en[sid] = True
+        flist = list(self.layer_workdir_map[layer.layer_order].stamps[sid].aie_functions.values())[0]
+        self.layer_workdir_map[layer.layer_order].stamps[sid].pm_reload_en = True
         for f in flist:
           if _strip_template(layer.stamps[sid].name.lower()) == _strip_template(f.name.lower()):
             stamp = layer.stamps[sid]
@@ -901,8 +901,8 @@ class LayerInfo:
     # AIECompiler only knows flexmlIDs so we use that to match with correct layer
     # Resolve PCs once per stamp.
     for sid in range(self.overlay.get_stamps_per_batch()):
-      has_pm_reload = self.work_dir.pm_reload_en[sid]
-      for elf_name, flist in self.work_dir.aie_functions[sid].items():
+      has_pm_reload = self.work_dir.stamps[sid].pm_reload_en
+      for elf_name, flist in self.work_dir.stamps[sid].aie_functions.items():
         LOGGER.verbose_print(f"Initializing layers for stamp {sid} ELF: {elf_name}")
         elf_id = elf_name.split("reloadable")[-1]
         for f, l in itertools.product(flist, self.layers):
@@ -917,7 +917,7 @@ class LayerInfo:
               continue
             # Check if this layer is present in the elf
             # In buffer_info the flexml_ids might not be in order of stamps
-            if has_pm_reload and not any(i in self.work_dir.elf_flxmlid_maps[sid][elf_id] for i in l.flexml_ids):
+            if has_pm_reload and not any(i in self.work_dir.stamps[sid].elf_flxmlid_maps[elf_id] for i in l.flexml_ids):
               continue
             LOGGER.verbose_print("Layer found:", l.layer_order, stamp.name)
             stamp.elf_name = elf_id
