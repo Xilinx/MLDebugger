@@ -898,34 +898,47 @@ class LayerInfo:
 
     # Hierarchy of Data:
     # Stamp <- Elf <- Layers
-    # AIECompiler only knows flexmlIDs so we use that to match with correct layer
-    # Resolve PCs once per stamp.
+    # AIECompiler only knows flexmlIDs so we use that to match with correct layer.
+    # For each layer we pick the ELF its kernel lives in, then fill in the PCs.
     for sid in range(self.overlay.get_stamps_per_batch()):
-      has_pm_reload = self.work_dir.stamps[sid].pm_reload_en
-      for elf_name, flist in self.work_dir.stamps[sid].aie_functions.items():
-        LOGGER.verbose_print(f"Initializing layers for stamp {sid} ELF: {elf_name}")
-        elf_id = elf_name.split("reloadable")[-1]
-        for f, l in itertools.product(flist, self.layers):
-          if sid > len(l.stamps) - 1:
-            continue
-          if _strip_template(l.stamps[sid].name.lower()) == _strip_template(f.name.lower()):
-            stamp = l.stamps[sid]
-            if l.lcp.is_tg and stamp.elf_name == elf_id:
-              stamp.start_pc = f.start_pc
-              if f.name.lower() not in skip_end_pc_kernels:
-                stamp.end_pc = f.final_lock_release_pc
-              continue
-            # Check if this layer is present in the elf
-            # In buffer_info the flexml_ids might not be in order of stamps
-            if has_pm_reload and not any(i in self.work_dir.stamps[sid].elf_flxmlid_maps[elf_id] for i in l.flexml_ids):
-              continue
-            LOGGER.verbose_print("Layer found:", l.layer_order, stamp.name)
-            stamp.elf_name = elf_id
-            stamp.start_pc = f.start_pc
-            if f.name.lower() not in skip_end_pc_kernels:
-              stamp.end_pc = f.final_lock_release_pc
+      aiec_info = self.work_dir.stamp(sid)
+      # Index functions by elf_id and stripped name for direct lookup.
+      funcs_by_elf = {
+        elf_name.split("reloadable")[-1]:
+          {_strip_template(f.name.lower()): f for f in flist}
+        for elf_name, flist in aiec_info.aie_functions.items()
+      }
+      for layer in self.layers:
+        if sid >= len(layer.stamps):
+          continue
+        stamp = layer.stamps[sid]
+        key = _strip_template(stamp.name.lower())
+        # Pick the ELF this layer's kernel comes from.
+        if layer.lcp.is_tg:
+          # TG layers already carry their elf_name.
+          elf_id = stamp.elf_name
+        elif aiec_info.pm_reload_en:
+          # In buffer_info the flexml_ids might not be in order of stamps, so
+          # match on flexml-id membership and name within the same ELF.
+          elf_id = next((e for e, fns in funcs_by_elf.items()
+                         if key in fns
+                         and any(i in aiec_info.elf_flxmlid_maps[e] for i in layer.flexml_ids)),
+                        None)
+        else:
+          elf_id = next((e for e, fns in funcs_by_elf.items() if key in fns), None)
+
+        f = funcs_by_elf.get(elf_id, {}).get(key) if elf_id is not None else None
+        if f is None:
+          continue
+        LOGGER.verbose_print("Layer found:", layer.layer_order, stamp.name)
+        if not layer.lcp.is_tg:
+          stamp.elf_name = elf_id
+        stamp.start_pc = f.start_pc
+        if f.name.lower() not in skip_end_pc_kernels:
+          stamp.end_pc = f.final_lock_release_pc
 
     # Under right conditions, we don't even go through iterations
+    # This is optional enhancement for stability.
     if args.run_flags.skip_iter:
       for idx, layer in enumerate(self.layers):
         if idx >= len(self.layers) - 1:
