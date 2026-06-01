@@ -473,8 +473,12 @@ class BatchRunner:
                  f" stamps: {len(layer.stamps)}, iters {layer.lcp.num_iter}")
       self.schedule_layer_start(layer)
       self.run_layer(layer)
-      for sid, _ in enumerate(self.state.pm_reload):
-        self.state.pm_reload[sid] = self.check_pm_reload(sid)
+      # Only recompute reload state for replicas that run THIS layer. Stamps
+      # skipping it (e.g. across TG layers) keep the early-armed combo state
+      # they were scheduled with, instead of being clobbered here.
+      for sid in range(len(self.state.pm_reload)):
+        if layer.runs_replica(sid):
+          self.state.pm_reload[sid] = self.check_pm_reload(sid)
 
     for sid in overlay.get_stampids():
       self.aie_utls[sid].initialize_stamp()
