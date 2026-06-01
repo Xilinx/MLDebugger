@@ -68,9 +68,9 @@ class StampInfo:
   # elf_name -> list[AIEFunction]
   aie_functions: dict = field(default_factory=dict)
   # elf partition -> list of flexml layer ids (only set when pm reload).
-  elf_flxmlid_maps: dict = {}
+  elf_flxmlid_maps: dict = field(default_factory=dict)
   # list[GlobalVar] for lcpPing/lcpPong (None until first var is found).
-  globals: list = []
+  globals: list = field(default_factory=list)
   # Lock acquire instruction PC after layer execution (used for skip_iter).
   post_layer_lock_acq_pc: int = 0
   # list[(elf_name, lst_text)] captured during LLVM parsing.
