@@ -254,6 +254,10 @@ class Layer:
     self.pm_work_dir = info.get("pm", None)
     self.is_unsupported = False
     self.num_batches = num_batches
+    # Global stamps-per-batch (S from BxSxCxR), captured before the per-layer
+    # reduction below. Flat replica ids map to a per-batch stamp via `sid % S`,
+    # so this is the correct modulus even when this layer runs fewer stamps.
+    self.overlay_stamps_per_batch = num_stamps
 
     self.lcp.is_tg = "templated_graph" in info
     kname = [i.lower() for i in info["kernel_name"]][0]
@@ -268,7 +272,7 @@ class Layer:
 
     # Per-batch stamp count for this layer. Batches share the same stamp
     # metadata; the per-batch stamp list is mirrored across batches at call
-    # sites via get_stamp / get_stamps_for_all_batches.
+    # sites via get_stamp.
     self.stamps_per_batch = num_stamps
     self.stamps = [Stamp(name=kname) for _ in range(num_stamps)]
 
@@ -301,22 +305,19 @@ class Layer:
     self._initialize_iters(info, version)
     LOGGER.verbose_print(f"{self.layer_order}: {kname} {self.lcp.num_iter}")
 
+  def runs_replica(self, sid):
+    """
+    True if flat replica `sid` runs this layer: its per-batch index `sid % S`
+    is below this layer's (possibly reduced) `stamps_per_batch`.
+    """
+    return (sid % self.overlay_stamps_per_batch) < self.stamps_per_batch
+
   def get_stamp(self, sid):
     """
-    Return the per-batch stamp metadata for a flat replica id.
-
-    Batches are data-parallel copies that share the same kernel/PCs, so the
-    canonical per-batch stamp list (length `stamps_per_batch`) is indexed by
-    `sid % stamps_per_batch`.
+    Per-batch stamp metadata for flat replica `sid`, indexed by `sid % S`.
+    Caller must ensure participation (see `runs_replica`).
     """
-    return self.stamps[int(sid % self.stamps_per_batch)]
-
-  def get_stamps_for_all_batches(self):
-    """
-    Return a list of stamps expanded across all batches (length B * S). Used
-    by callers that want to iterate over flat replica ids.
-    """
-    return self.stamps * self.num_batches
+    return self.stamps[int(sid % self.overlay_stamps_per_batch)]
 
   def _initialize_flexml_ids(self, info):
     """
@@ -585,18 +586,24 @@ class LayerInfo:
     info = {}
     for n in range(len(self.overlay.get_stampids())):
       info[n] = {}
+    s_per_batch = self.overlay.get_stamps_per_batch()
     for layer in self.layers:
       order = layer.layer_order
-      for sid, stamp in enumerate(layer.get_stamps_for_all_batches()):
-        imap = info[sid]
-        elf = stamp.elf_name
-        if not elf:
-          continue
-        if elf not in imap:
-          imap[elf] = [order, order]
-        else:
-          imap[elf][0] = min(imap[elf][0], order)
-          imap[elf][1] = max(imap[elf][1], order)
+      # Map each per-batch stamp to its flat replica id in every batch:
+      # sid = b * S + s. Reduced layers (s < stamps_per_batch) simply omit
+      # the higher per-batch stamps, mirroring participation across batches.
+      for b in range(self.overlay.get_batch_count()):
+        for s, stamp in enumerate(layer.stamps):
+          sid = b * s_per_batch + s
+          imap = info[sid]
+          elf = stamp.elf_name
+          if not elf:
+            continue
+          if elf not in imap:
+            imap[elf] = [order, order]
+          else:
+            imap[elf][0] = min(imap[elf][0], order)
+            imap[elf][1] = max(imap[elf][1], order)
     return info
 
   def print_info(self):

@@ -138,12 +138,19 @@ class BatchRunner:
     if not self.design_info.work_dir.stamp(stamp_id).pm_reload_en or self.state.current_layer + 1 >= len(self.state.layers):
       return False
 
+    # This replica must actually run the current layer. Higher-indexed per-batch
+    # stamps skip layers whose stamps_per_batch is smaller (e.g. TG layers run
+    # only the leftmost stamp of each batch), so there is no current ELF to
+    # compare against and no reload to schedule here.
+    if not layer.runs_replica(stamp_id):
+      return False
+
     if self.design_info.overlay.is_leftmost_in_batch(stamp_id):
       next_layer = self.state.layers[self.state.current_layer + 1]
     else:
       next_layer = self.state.get_next_layer_for_stamp(stamp_id, idx=1)
 
-    if next_layer is None:
+    if next_layer is None or not next_layer.runs_replica(stamp_id):
       return False
     cur_stamp = layer.get_stamp(stamp_id)
     next_stamp = next_layer.get_stamp(stamp_id)

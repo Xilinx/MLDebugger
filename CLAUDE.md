@@ -320,8 +320,9 @@ the rest of the system uses.
   be less than the overlay's S - higher-indexed stamps skip this
   layer). Batches share kernel/PC metadata, so callers translate a
   flat replica id with `layer.get_stamp(sid)` (returns
-  `stamps[sid % stamps_per_batch]`) or
-  `layer.get_stamps_for_all_batches()` for the expanded `B*S` view.
+  `stamps[sid % S]`, the per-batch stamp index) and gate participation
+  with `layer.runs_replica(sid)` (false when this layer's
+  `stamps_per_batch` is smaller, e.g. TG layers).
 - A `Buffer` is the user-level concept (one IFM, one OFM, one weight
   set). Internally it holds an `L1Buffer` (ping/pong) and a list of
   `L2Buffer` chunks. Buffers larger than the memory-tile size are
