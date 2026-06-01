@@ -491,8 +491,6 @@ class LayerInfo:
     self.x2 = False
     self.x2_work_dirs = {}
     self.layer_workdir_map = {}
-    self.num_batches = 1
-    self.num_stamps = 1
     self.mladf_report = None
 
     has_bi = args.buffer_info and Path(args.buffer_info).is_file()
@@ -504,15 +502,15 @@ class LayerInfo:
     # 2. Initialize Overlay from Layout
     self.overlay = Overlay(args, self.layout)
     # Re-sync local view in case Overlay applied -o overrides.
-    self.num_batches = self.overlay.get_batch_count()
-    self.num_stamps = self.overlay.get_stamps_per_batch()
+    num_batches = self.overlay.get_batch_count()
+    num_stamps = self.overlay.get_stamps_per_batch()
     # 3. Parse mladf report.
     # TBD: memory optimize this as this json can be large
     if not args.aie_only and has_bi and use_mladf:
       self.mladf_report = MladfReport(args.buffer_info, args.mladf_report, self.overlay.get_stampwidth())
     # 4. Initialize Layers
     if not args.aie_only:
-      self._init_layers(data, args.aie_iface, self.num_stamps, self.num_batches)
+      self._init_layers(data, args.aie_iface, num_stamps, num_batches)
     # 5: Parse work dir
     if self.x2:
       for layer in self.layers:
@@ -565,7 +563,7 @@ class LayerInfo:
     Returns:
         bool: True if stamps_per_batch > 1, False otherwise.
     """
-    return self.num_stamps > 1
+    return self.overlay.get_stamps_per_batch() > 1
 
   def is_batched(self):
     """
@@ -574,7 +572,7 @@ class LayerInfo:
     Returns:
         bool: True if more than one batch, False otherwise.
     """
-    return self.num_batches > 1
+    return self.overlay.get_batch_count() > 1
 
   def _create_info(self):
     """
@@ -686,7 +684,7 @@ class LayerInfo:
       # replicate across batches, not across per-batch stamps.
       if self.is_batched():
         original_buffers = list(layer.l3_buffers)
-        for b in range(1, self.num_batches):
+        for b in range(1, self.overlay.get_batch_count()):
           for orig_buffer in original_buffers:
             stamped_buffer = L3Buffer(
               name=f"{orig_buffer.name}_stamp_{b}",
@@ -783,8 +781,7 @@ class LayerInfo:
     Returns:
         dict: Parsed JSON object from file.
     Side Effects:
-        - Sets self.layout to (B, S, R, C), self.num_batches, self.num_stamps,
-          self.x2.
+        - Sets self.layout to (B, S, R, C), self.x2.
     """
     print("Initializing Buffer Info ...")
     with open(buffer_info_file, encoding="utf-8") as fd:
@@ -805,8 +802,6 @@ class LayerInfo:
       else:
         stamps = overlay_stamps
 
-    self.num_batches = batches
-    self.num_stamps = stamps
     self.layout = (batches, stamps, nrow, ncol)
     if batches > 1:
       LOGGER.log("Batched design detected")
@@ -862,7 +857,7 @@ class LayerInfo:
     if not self.layers:
       raise RuntimeError("No layers found in the design.")
     # Resolve PCs once per stamp
-    for sid in range(self.num_stamps):
+    for sid in range(self.overlay.get_stamps_per_batch()):
       for layer in self.layers:
         flist = list(self.layer_workdir_map[layer.layer_order].aie_functions[sid].values())[0]
         self.layer_workdir_map[layer.layer_order].pm_reload_en[sid] = True
@@ -903,8 +898,8 @@ class LayerInfo:
     # Hierarchy of Data:
     # Stamp <- Elf <- Layers
     # AIECompiler only knows flexmlIDs so we use that to match with correct layer
-    # Resolve PCs once per stamp index (sid).
-    for sid in range(self.num_stamps):
+    # Resolve PCs once per stamp.
+    for sid in range(self.overlay.get_stamps_per_batch()):
       has_pm_reload = self.work_dir.pm_reload_en[sid]
       for elf_name, flist in self.work_dir.aie_functions[sid].items():
         LOGGER.verbose_print(f"Initializing layers for stamp {sid} ELF: {elf_name}")
