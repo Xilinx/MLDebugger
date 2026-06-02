@@ -122,36 +122,26 @@ class BatchRunner:
   def check_pm_reload(self, stamp_id=0):
     """
     Check if the next ELF will be loaded (PM Reload) for the given replica.
-
-    For each batch, the leftmost replica (per-batch stamp index 0) always
-    participates in every layer, so we look at `current_layer + 1` directly.
-    Other replicas may skip layers, so we walk forward to the next layer
-    they actually run via `get_next_layer_for_stamp`.
-
     Args:
       stamp_id: Replica id to check for reload (default 0).
-
     Returns:
       True if program memory reload will occur at the next layer, False otherwise.
     """
     layer = self.state.layers[self.state.current_layer]
+    # PM Load is not enabled for this stamp or this is last layer
     if not self.design_info.work_dir.stamp(stamp_id).pm_reload_en or self.state.current_layer + 1 >= len(self.state.layers):
       return False
-
-    # This replica must actually run the current layer. Higher-indexed per-batch
-    # stamps skip layers whose stamps_per_batch is smaller (e.g. TG layers run
-    # only the leftmost stamp of each batch), so there is no current ELF to
-    # compare against and no reload to schedule here.
+    # Stamp id doesn't run for this layer
     if not layer.runs_replica(stamp_id):
       return False
-
+    # Find next layer that runs this stamp
     if self.design_info.overlay.is_leftmost_in_batch(stamp_id):
       next_layer = self.state.layers[self.state.current_layer + 1]
     else:
       next_layer = self.state.get_next_layer_for_stamp(stamp_id, idx=1)
-
     if next_layer is None or not next_layer.runs_replica(stamp_id):
       return False
+
     cur_stamp = layer.get_stamp(stamp_id)
     next_stamp = next_layer.get_stamp(stamp_id)
     return cur_stamp.elf_name != next_stamp.elf_name
@@ -462,7 +452,6 @@ class BatchRunner:
   def execute_and_dump(self):
     """
     Execute all layers in batch mode, dumping buffers as required.
-
     Primary entry point for batch mode execution in MLDebugger.
     """
     self.common_init()
@@ -473,10 +462,9 @@ class BatchRunner:
                  f" stamps: {len(layer.stamps)}, iters {layer.lcp.num_iter}")
       self.schedule_layer_start(layer)
       self.run_layer(layer)
-      # Only recompute reload state for replicas that run THIS layer. Stamps
-      # skipping it (e.g. across TG layers) keep the early-armed combo state
-      # they were scheduled with, instead of being clobbered here.
-      for sid in range(len(self.state.pm_reload)):
+
+      # Only recompute reload state for replicas that run THIS layer
+      for sid, _ in enumerate(self.state.pm_reload):
         if layer.runs_replica(sid):
           self.state.pm_reload[sid] = self.check_pm_reload(sid)
 

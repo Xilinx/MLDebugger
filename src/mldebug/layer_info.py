@@ -270,10 +270,6 @@ class Layer:
     if n_stamps and n_stamps < num_stamps:
       num_stamps = n_stamps
 
-    # Per-batch stamp count for this layer. Batches share the same stamp
-    # metadata; the per-batch stamp list is mirrored across batches at call
-    # sites via get_stamp.
-    self.stamps_per_batch = num_stamps
     self.stamps = [Stamp(name=kname) for _ in range(num_stamps)]
 
     # 1. Layers without any kernel should be skipped
@@ -307,10 +303,9 @@ class Layer:
 
   def runs_replica(self, sid):
     """
-    True if flat replica `sid` runs this layer: its per-batch index `sid % S`
-    is below this layer's (possibly reduced) `stamps_per_batch`.
+    A layer can run less no of stamps than maximum.
     """
-    return (sid % self.overlay_stamps_per_batch) < self.stamps_per_batch
+    return (sid % self.overlay_stamps_per_batch) < len(self.stamps)
 
   def get_stamp(self, sid):
     """

@@ -580,7 +580,8 @@ Before implementing:
 - No "flexibility" or "configurability" that wasn't requested.
 - No error handling for impossible scenarios.
 - If you write 200 lines and it could be 50, rewrite it.
-- Keep docstrings short - ideally 3-4 lines.
+- Keep docstrings short - ideally 1-2 lines. If possible, add small one line comments interspersed
+  throughout rather than big chunks of comments.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
