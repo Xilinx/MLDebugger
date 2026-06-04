@@ -107,9 +107,10 @@ class Buffer:
     self.wts = wts
     size_shift = self._get_size_shift(entry, size_shift)
 
+    # pong can be missing (no double buffering)
     if "l1_ping" in entry:
       ping = entry["l1_ping"]
-      pong = entry["l1_pong"]
+      pong = entry.get("l1_pong", ping)
       self.l1 = L1Buffer(int(ping[0], 16), ping[1] * size_shift, int(pong[0], 16), pong[1] * size_shift)
     
     # Handle both "l2" format and "l2_ping/l2_pong" format
