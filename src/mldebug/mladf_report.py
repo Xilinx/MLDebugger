@@ -39,6 +39,21 @@ class MladfReport:
     self.m2_layers = m2_data.get("layer_information", {})
     self.bi_to_m2 = self._approach1_map(self.bi_layers, self.m2_layers)
 
+  def tg_order_mismatch(self):
+    """True if any TG layer's buffer_info order disagrees with mladf order."""
+    m2_id = {k: v.get("layer_id") for k, v in self.m2_layers.items()}
+    is_tg = {bi["layer_order"]: "templated_graph" in bi for bi in self.bi_layers.values()}
+
+    prev_max = -1
+    for bilo in sorted(self.bi_to_m2.keys()):
+      ids = sorted(i for i in (m2_id[k] for k in self.bi_to_m2[bilo]) if i is not None)
+      if not ids:
+        continue
+      if ids[0] < prev_max and is_tg.get(bilo):
+        return True
+      prev_max = max(prev_max, ids[-1])
+    return False
+
   def get_aiec_layers_by_bilo(self, bilo):
     """
     Return list of aiecompiler layers for a specific

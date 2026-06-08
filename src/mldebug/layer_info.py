@@ -478,6 +478,11 @@ class LayerInfo:
     # TBD: memory optimize this as this json can be large
     if not args.aie_only and has_bi and use_mladf:
       self.mladf_report = MladfReport(args.buffer_info, args.mladf_report, self.overlay.get_stampwidth())
+      # TG layers out of mladf execution order would dump stale buffers; skip them.
+      if self.mladf_report.tg_order_mismatch():
+        LOGGER.log("WARNING: TG layer order mismatch with mladf; disabling TG stepping.")
+        args.run_flags.disable_tg = True
+        self.mladf_report = None
     # 4. Initialize Layers
     if not args.aie_only:
       num_stamps = len(self.overlay.get_stampids())
