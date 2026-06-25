@@ -5,6 +5,7 @@
 Utility to help make sense of AIE register Values
 """
 
+import os
 import re
 import json
 import subprocess
@@ -467,6 +468,12 @@ class AIEStatus:
     self._append_uc_status()
     # Add HSA queue status for aie2ps
     self._append_hsa_queue_status()
+    if debug_map_json is not None and not os.path.exists(debug_map_json):
+      print(
+        f"[WARNING] debug_map.json not found at {debug_map_json}. "
+        "ASM hang line will be omitted from the AIE status."
+      )
+      debug_map_json = None
     if debug_map_json is not None:
       with open(debug_map_json, "r", encoding="utf-8") as f:
         data = json.load(f)

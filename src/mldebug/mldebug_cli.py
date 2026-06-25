@@ -152,10 +152,18 @@ def launch_debug(args, output_dir):
   _apply_unsupported_kernels_from_args(args)
   handle = ClientDebug(args, context_id, pid, output_dir)
   if args.dump_aie_status:
+    dmj = getattr(args, "debug_map_json", None)
+    if dmj is not None and not os.path.exists(dmj):
+      print(
+        f"[WARNING] debug_map.json not found at {dmj}. "
+        "ASM hang line will be omitted from the AIE status."
+      )
+      dmj = None
     handle.status_handle.get(
       args.dump_aie_status,
       advanced=True,
-      guidance=False
+      guidance=False,
+      debug_map_json=dmj
     )
     print(f"[INFO] Advanced AIE status written to {args.dump_aie_status}")
     return
