@@ -94,7 +94,8 @@ class ClientDebug:
 
     self.impl = self.impls[0]
     self.status_handle = AIEStatus(
-      self.impl, self.design_info.overlay.get_tiles, args.aie_iface, self.design_info.overlay.get_repr()
+      self.impl, self.design_info.overlay.get_tiles, args.aie_iface, self.design_info.overlay.get_repr(),
+      debug_map_json=getattr(args, "debug_map_json", None)
     )
 
     # Initialize specialized components (share mutable lists by reference)

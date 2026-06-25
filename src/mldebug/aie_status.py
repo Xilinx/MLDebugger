@@ -18,7 +18,7 @@ class AIEStatus:
   Top level class to manage aie status
   """
 
-  def __init__(self, backend, get_debug_tiles, aie_iface, overlay):
+  def __init__(self, backend, get_debug_tiles, aie_iface, overlay, debug_map_json=None):
     """
     Initialize the AIEStatus manager.
 
@@ -27,12 +27,15 @@ class AIEStatus:
       get_debug_tiles: Function to retrieve tiles of interest.
       aie_iface: Interface containing register maps and parsing.
       overlay: Overlay type string, e.g. "1x4x4".
+      debug_map_json: Optional; default path to debug_map.json used to resolve
+        the ASM hang line when callers do not pass one explicitly.
     """
     self.backend = backend
     self.aie_iface = aie_iface
     self.get_debug_tiles = get_debug_tiles
     self.results = {}
     self.overlay = {}
+    self.default_debug_map_json = debug_map_json
     self.guidance_checker: Optional[AIEGuidanceChecker] = None
     if overlay == "1x4x4":
       self.overlay = self.aie_iface.parse_overlay()
@@ -411,6 +414,8 @@ class AIEStatus:
       advanced: Optional; include extra diagnostics.
       debug_map_json: Optional; debug map path for microcontroller section.
     """
+    if debug_map_json is None:
+      debug_map_json = self.default_debug_map_json
     if not tile_type:
       tile_type = self.aie_iface.TILE_TYPES
 
@@ -508,6 +513,8 @@ class AIEStatus:
       debug_map_json: Optional; debug info file.
       guidance: Optional; if True, run guidance checks after status. Default: True
     """
+    if debug_map_json is None:
+      debug_map_json = self.default_debug_map_json
     self.results = {}
     if self.aie_iface.HAS_UC_MODULE:
       self._get_uc_status(debug_map_json=debug_map_json)
