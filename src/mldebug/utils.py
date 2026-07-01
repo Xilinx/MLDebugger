@@ -336,6 +336,7 @@ def print_tile_grid(title, tiles, register_values=None, format_type="hex"):
 
   print(f"{'=' * total_width}")
 
+
 def input_with_timeout(prompt, timeout):
   """
   Read a line from stdin, or return None after ``timeout`` seconds.
@@ -409,13 +410,15 @@ def is_aarch64():
   """
   ARM
   """
-  return platform.machine().lower() in ['aarch64', 'arm64']
+  return platform.machine().lower() in ["aarch64", "arm64"]
+
 
 def is_windows():
   """
   x86 Windows
   """
   return os.name == "nt"
+
 
 def is_linux():
   """

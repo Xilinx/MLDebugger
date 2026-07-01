@@ -190,13 +190,12 @@ class AIEUtil:
     wait_until(self.impl.poll_core_status)
 
     pcs = self.impl.read_core_pc(True)
-    is_valid =  self.pcs_match_target(pcs, lock_acq_pc)
+    is_valid = self.pcs_match_target(pcs, lock_acq_pc)
     if not is_valid:
       LOGGER.log(
-          f"{sid}: Invalid result in skip_iterations_to_lock_acq. "
-          f"target_pc={lock_acq_pc} pcs={pcs} "
-        )
-    #else:
+        f"{sid}: Invalid result in skip_iterations_to_lock_acq. target_pc={lock_acq_pc} pcs={pcs} "
+      )
+    # else:
     #  LOGGER.log(
     #      f"{sid}: Successfully skipped to lock acq pc. "
     #      f"target_pc={lock_acq_pc} pcs={pcs} "
@@ -307,7 +306,9 @@ class AIEUtil:
     true_core_event = self._get_eventid("TRUE_CORE")
 
     # eventC==eventD means generate combo3 and reset state machine
-    combo_event_inputs = rising_edge_event + (true_core_event << 8) + (pc_event << 16) + (pc_event << 24)
+    combo_event_inputs = (
+      rising_edge_event + (true_core_event << 8) + (pc_event << 16) + (pc_event << 24)
+    )
     self.impl.write_aie_regs(reg_map["DEBUG_CONTROL1"], combo_3_event << 16)
     self.impl.write_aie_regs(reg_map["COMBO_EVENT_INPUTS_A_D"], combo_event_inputs)
 
@@ -359,7 +360,7 @@ class AIEUtil:
           self._error_found = True
 
     # Check secondary error event register if it exists (NPU3 only)
-    if hasattr(aif, 'ERRORS_EVENT_REG2'):
+    if hasattr(aif, "ERRORS_EVENT_REG2"):
       for c, r in self._filter_tiles(aif.AIE_TILE_T):
         data = self.impl.read_register(c, r, aif.Core_registers[aif.ERRORS_EVENT_REG2])
         parsed = aif.parse_register(aif.ERRORS_EVENT_REG2, data)
@@ -392,7 +393,6 @@ class AIEUtil:
         f" Current State: Start of Layer_{layer}, It_{itr}\nERROR_EVENTS->CORES SUMMARY:\n{summary_str}\n"
       )
       print()
-
 
   def write_aie_regs(self, offset, val):
     """
@@ -444,7 +444,7 @@ class AIEUtil:
     Single step an aie core
     """
     offset = self.aie_iface.Core_registers["DEBUG_CONTROL0"]
-    self.impl.write_register(c, r, offset, (1<<2))
+    self.impl.write_register(c, r, offset, (1 << 2))
 
   def disable_ecc_event(self):
     """
@@ -474,17 +474,17 @@ class AIEUtil:
       for tile, val in pc_dict.items():
         if target_pc == val:
           continue
-        #print(f"Try to reconcile tile {tile} {val}")
+        # print(f"Try to reconcile tile {tile} {val}")
         col, row = tile
         for _ in range(num_pipeline_stages):
           self.single_step_core(col, row)
           newpc = self.read_core_pc_tile(col, row)
           delta = newpc - target_pc
-          if target_pc == newpc or max_pc_tolerance > delta > 0 :
+          if target_pc == newpc or max_pc_tolerance > delta > 0:
             break
         # if core pc is slightly ahead, we should be okay
         # but if not, execution can run into trouble later
         if target_pc > self.read_core_pc_tile(col, row):
           return False
-        #print("Successfully reconciled")
+        # print("Successfully reconciled")
     return True

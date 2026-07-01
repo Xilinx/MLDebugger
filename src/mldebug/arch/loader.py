@@ -12,6 +12,7 @@ AIE_DEV_STX = "stx"
 AIE_DEV_TEL = "telluride"
 AIE_DEV_NPU3 = "npu3"
 
+
 def load_aie_arch(device):
   """
   return specific aie arch module based on name

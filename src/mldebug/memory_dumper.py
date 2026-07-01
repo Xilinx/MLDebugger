@@ -204,7 +204,9 @@ class MemoryDumper:
     self.dump_l3_buffers(layer, x2=True)
     previous_layer = self.state.get_previous_layer()
     if previous_layer:
-      self.dump_memory_l2(previous_layer.out_buffers, it, previous_layer.layer_order, use_l2_names=True)
+      self.dump_memory_l2(
+        previous_layer.out_buffers, it, previous_layer.layer_order, use_l2_names=True
+      )
 
   def dump_l3_buffers(self, layer, x2=False):
     """
@@ -268,5 +270,7 @@ class MemoryDumper:
     self.dump_l3_buffers(self.state.get_current_layer(), x2=self.args.x2_folder_path is not None)
     if self.state.get_current_layer() and self.state.get_current_layer().l3_buffers:
       for buffer in self.state.get_current_layer().l3_buffers:
-        LOGGER.log(f"[INFO] L3 buffer '{buffer.name}' dumped successfully (offset={buffer.offset}, size={buffer.size})")
+        LOGGER.log(
+          f"[INFO] L3 buffer '{buffer.name}' dumped successfully (offset={buffer.offset}, size={buffer.size})"
+        )
       LOGGER.log(f"[INFO] Memory dump complete at : {self.get_output_path()}")

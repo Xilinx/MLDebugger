@@ -15,6 +15,7 @@ from pathlib import Path
 from mldebug.extra.calltree import AIECallTree
 from mldebug.utils import LOGGER, is_aarch64, is_windows
 
+
 @dataclass
 class AIEFunction:
   """
@@ -94,7 +95,7 @@ def _parse_flexml_layer_id(objstr):
   if m:
     return int(m[0])
   return -1
-  #raise RuntimeError(f"Unable to parse flexml layer id from {objstr}")
+  # raise RuntimeError(f"Unable to parse flexml layer id from {objstr}")
 
 
 class WorkDir:
@@ -102,7 +103,7 @@ class WorkDir:
   Abstraction for AIE Work Directory
   """
 
-  def __init__(self, aie_dir, peano, overlay, arch_name,  dump_lst=False):
+  def __init__(self, aie_dir, peano, overlay, arch_name, dump_lst=False):
     """
     Initialize the AIE Work Directory abstraction. Sets up internal state and parses functions.
     Args:
@@ -169,7 +170,9 @@ class WorkDir:
     """
     elf_layer_map = {}
     # Elfs for different columns can be reloaded in same line so we have to create multiple groups
-    pattern = re.compile("reloadable elf for .*{?\\[col:" + f"{col}" + " row:" + f"{row}" + "\\]([0-9]+)(.+)")
+    pattern = re.compile(
+      "reloadable elf for .*{?\\[col:" + f"{col}" + " row:" + f"{row}" + "\\]([0-9]+)(.+)"
+    )
     with open(work_dir + "/ps/c_rts/aie_runtime_control.cpp", encoding="utf-8") as fd:
       for line in fd:
         match = pattern.search(line)
@@ -212,7 +215,15 @@ class WorkDir:
       exe = "llvm-objdump.aarch64"
     with resources.as_file(resources.files("mldebug") / "bin" / exe) as objdump_path:
       lst = subprocess.check_output(
-        [str(objdump_path), "-d", "-z", "--no-show-raw-insn", f"--arch-name={arch_name}", "-C", elf_path]
+        [
+          str(objdump_path),
+          "-d",
+          "-z",
+          "--no-show-raw-insn",
+          f"--arch-name={arch_name}",
+          "-C",
+          elf_path,
+        ]
       )
       lst_data = lst.decode("utf-8")
 
@@ -487,8 +498,12 @@ class WorkDir:
           tokens = line.split()
           if len(tokens) >= 3:
             try:
-              self.stamps[sid].globals.append(GlobalVar(var_name, int(tokens[0], base=16), int(tokens[2], base=16)))
-              LOGGER.verbose_print(f"[INFO] Found global variable: {var_name} at {tokens[0]} size {tokens[2]}")
+              self.stamps[sid].globals.append(
+                GlobalVar(var_name, int(tokens[0], base=16), int(tokens[2], base=16))
+              )
+              LOGGER.verbose_print(
+                f"[INFO] Found global variable: {var_name} at {tokens[0]} size {tokens[2]}"
+              )
             except ValueError:
               pass  # Ignore lines that cannot be parsed
             break
@@ -534,7 +549,9 @@ class WorkDir:
               end_addr = int(tokens[1], base=16)
               size = end_addr - start_addr + 1
               self.stamps[sid].globals.append(GlobalVar(var_name, start_addr, size))
-              LOGGER.verbose_print(f"[INFO] Found global variable: {var_name} at {start_addr} size {size}")
+              LOGGER.verbose_print(
+                f"[INFO] Found global variable: {var_name} at {start_addr} size {size}"
+              )
             except ValueError:
               pass  # Ignore lines that cannot be parsed
             break

@@ -16,7 +16,9 @@ class XRTImpl(BackendInterface):
   XRT Backend top
   """
 
-  def __init__(self, aie_overlay_tiles, ctx_id, pid, dev_name, debug_library=False, core_dump_file=None) -> None:
+  def __init__(
+    self, aie_overlay_tiles, ctx_id, pid, dev_name, debug_library=False, core_dump_file=None
+  ) -> None:
     """
     Initialize the XRTImpl backend
 
@@ -31,7 +33,9 @@ class XRTImpl(BackendInterface):
     self.overlay_aie_core_tiles = aie_overlay_tiles
     use_debug_library = "debuglibrary" if debug_library else "xrt"
     if dev_name != AIE_DEV_TEL:
-      self.binding = MlDebug(list(self.overlay_aie_core_tiles), ctx_id, pid, dev_name, use_debug_library)
+      self.binding = MlDebug(
+        list(self.overlay_aie_core_tiles), ctx_id, pid, dev_name, use_debug_library
+      )
     else:
       self.binding = MlDebug(list(self.overlay_aie_core_tiles), ctx_id, pid, dev_name)
     self.pc_brkpts = [0, 0]

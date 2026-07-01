@@ -52,7 +52,9 @@ class ClientDebug:
     # Create this first so that connection will be aborted in case of crash
     if self.args.automated_debug or self.args.l3:
       debug_server = DebugServer(
-        self.output_dir, self.args.backend == "test", subgraph_name=self.args.subgraph_name,
+        self.output_dir,
+        self.args.backend == "test",
+        subgraph_name=self.args.subgraph_name,
       )
       # Track the live server so cleanup_and_exit() at unplanned exit points
       # can send TERMINATE_CONNECTION to flexmlrt.
@@ -69,7 +71,7 @@ class ClientDebug:
       if debug_server:
         print("[INFO] closing debug server.")
         debug_server.close()
-      raise(err)
+      raise (err)
 
     for i in self.design_info.overlay.get_stampids():
       config = BackendConfig(
@@ -79,14 +81,17 @@ class ClientDebug:
         device=args.device,
         design_info=self.design_info,
         args=args,
-        core_dump_file=getattr(args, 'core_dump', None),
-        no_header=getattr(args, 'no_header', False),
+        core_dump_file=getattr(args, "core_dump", None),
+        no_header=getattr(args, "no_header", False),
       )
       impl = create_backend(args.backend, config)
       self.impls.append(impl)
       self.aie_utls.append(
         AIEUtil(
-          args.aie_iface, impl, self.design_info.overlay.get_tiles(stamp_id=i), self.design_info.work_dir.stamp(i).globals
+          args.aie_iface,
+          impl,
+          self.design_info.overlay.get_tiles(stamp_id=i),
+          self.design_info.work_dir.stamp(i).globals,
         )
       )
 
@@ -94,7 +99,10 @@ class ClientDebug:
 
     self.impl = self.impls[0]
     self.status_handle = AIEStatus(
-      self.impl, self.design_info.overlay.get_tiles, args.aie_iface, self.design_info.overlay.get_repr()
+      self.impl,
+      self.design_info.overlay.get_tiles,
+      args.aie_iface,
+      self.design_info.overlay.get_repr(),
     )
 
     # Initialize specialized components (share mutable lists by reference)
@@ -103,8 +111,7 @@ class ClientDebug:
       self.dumper.debug_server = debug_server
 
     self.runner = BatchRunner(
-      args, self.state, self.design_info, self.impls, self.aie_utls,
-      self.dumper, self.status_handle
+      args, self.state, self.design_info, self.impls, self.aie_utls, self.dumper, self.status_handle
     )
     self.interactive = InteractiveController(
       args, self.state, self.design_info, self.impls, self.aie_utls, self.runner

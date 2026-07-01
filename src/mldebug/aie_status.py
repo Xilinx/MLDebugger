@@ -12,6 +12,7 @@ from typing import Optional
 
 from mldebug.extra.aie_guidance import AIEGuidanceChecker
 
+
 class AIEStatus:
   """
   Top level class to manage aie status
@@ -84,7 +85,9 @@ class AIEStatus:
           if overlay_info is None and vaiml:
             continue
           overlay_info = "" if not overlay_info or not vaiml else f" ({overlay_info})"
-          self.results[mtype][rtype].append((name + overlay_info, c, r, hex(regdata), extra_meta, parsed_reg))
+          self.results[mtype][rtype].append(
+            (name + overlay_info, c, r, hex(regdata), extra_meta, parsed_reg)
+          )
           channel += 1
 
   def _append_bd_status(self, mtype, registers):
@@ -184,24 +187,18 @@ class AIEStatus:
       if width == 64:
         # Read 64-bit by reading two 32-bit values and combining.
         result_low = subprocess.run(
-          ["devmem2", hex(address)],
-          capture_output=True,
-          text=True,
-          check=True
+          ["devmem2", hex(address)], capture_output=True, text=True, check=True
         )
-        match_low = re.search(r':\s*(0x[0-9a-fA-F]+)', result_low.stdout)
+        match_low = re.search(r":\s*(0x[0-9a-fA-F]+)", result_low.stdout)
         if not match_low:
           print(f"[WARNING] Failed to parse devmem2 output for address {hex(address)}")
           return None
         low_val = int(match_low.group(1), 16)
 
         result_high = subprocess.run(
-          ["devmem2", hex(address + 4)],
-          capture_output=True,
-          text=True,
-          check=True
+          ["devmem2", hex(address + 4)], capture_output=True, text=True, check=True
         )
-        match_high = re.search(r':\s*(0x[0-9a-fA-F]+)', result_high.stdout)
+        match_high = re.search(r":\s*(0x[0-9a-fA-F]+)", result_high.stdout)
         if not match_high:
           print(f"[WARNING] Failed to parse devmem2 output for address {hex(address + 4)}")
           return None
@@ -210,12 +207,9 @@ class AIEStatus:
         return (high_val << 32) | low_val
       else:
         result = subprocess.run(
-          ["devmem2", hex(address)],
-          capture_output=True,
-          text=True,
-          check=True
+          ["devmem2", hex(address)], capture_output=True, text=True, check=True
         )
-        match = re.search(r':\s*(0x[0-9a-fA-F]+)', result.stdout)
+        match = re.search(r":\s*(0x[0-9a-fA-F]+)", result.stdout)
         if not match:
           print(f"[WARNING] Failed to parse devmem2 output for address {hex(address)}")
           return None
@@ -259,11 +253,11 @@ class AIEStatus:
 
         # Validate address - skip DDR reads for invalid addresses
         # 0x0 indicates no queue, 0xffffffffffffffff indicates uninitialized/invalid
-        if hsa_queue_addr != 0 and hsa_queue_addr != 0xffffffffffffffff:
+        if hsa_queue_addr != 0 and hsa_queue_addr != 0xFFFFFFFFFFFFFFFF:
           # Read queue information from DDR
           read_index = self._read_ddr_with_devmem(hsa_queue_addr + 0x0, 64)
           write_index = self._read_ddr_with_devmem(hsa_queue_addr + 0x10, 64)
-          queue_capacity = self._read_ddr_with_devmem(hsa_queue_addr + 0xc, 32)
+          queue_capacity = self._read_ddr_with_devmem(hsa_queue_addr + 0xC, 32)
 
           if read_index is not None:
             hsa_info.append(("HSA_READ_INDEX", read_index))
@@ -316,7 +310,9 @@ class AIEStatus:
 
       if debug_mode:
         dbg_ctrl_1 = hex(self.backend.read_register(c, r, regmap["DEBUG_CONTROL1"]))
-        self.results[mtype][cs_k].append((f"DBG_CTRL:{dbg_ctrl_1}", c, r, cs_val, f"PC:{cpc_val}", cs_parsed))
+        self.results[mtype][cs_k].append(
+          (f"DBG_CTRL:{dbg_ctrl_1}", c, r, cs_val, f"PC:{cpc_val}", cs_parsed)
+        )
       else:
         cs_parsed += f",PC:{cpc_val}"
         self.results[mtype][cs_k].append((cs_k, c, r, cs_val, "", cs_parsed))
@@ -436,7 +432,15 @@ class AIEStatus:
       # DMA in AIE, Shim and MEM Tiles
       self._append_dma_status(ttype, vaiml)
 
-  def get(self, filename=None, tile_type=None, vaiml=False, advanced=False, debug_map_json=None, guidance=False):
+  def get(
+    self,
+    filename=None,
+    tile_type=None,
+    vaiml=False,
+    advanced=False,
+    debug_map_json=None,
+    guidance=False,
+  ):
     """
     Query, store, and print or save status for all requested tiles.
 
@@ -477,7 +481,11 @@ class AIEStatus:
         key = (entry.get("page_offset"), entry.get("column"))
         prev_map[key] = None
         if prev_entry:
-          prev_map[key] = prev_entry.get("operation"), prev_entry.get("line"), prev_entry.get("file")
+          prev_map[key] = (
+            prev_entry.get("operation"),
+            prev_entry.get("line"),
+            prev_entry.get("file"),
+          )
         prev_entry = entry
       for uc_data in self.results[self.aie_iface.SHIM_TILE_T]["UC_STATUS"]:
         d = dict(uc_data[3])
@@ -514,8 +522,7 @@ class AIEStatus:
     else:
       print("UC Module is not present in this device.")
 
-  def run_guidance_checks(self, show_passed=False, show_guidance=True,
-                          export_json=None):
+  def run_guidance_checks(self, show_passed=False, show_guidance=True, export_json=None):
     """
     Run guidance checks on collected status data and display results.
 

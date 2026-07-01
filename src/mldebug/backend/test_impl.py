@@ -10,6 +10,7 @@ import random
 from mldebug.utils import print_tile_grid
 from .backend_interface import BackendInterface
 
+
 class TestImpl(BackendInterface):
   """
   Test Backend Top Class
@@ -270,7 +271,11 @@ class TestImpl(BackendInterface):
     Returns:
       None
     """
-    print_tile_grid("Core Debug Status", self.aie_debug_tiles, register_values=[0xDEAD] * len(self.aie_debug_tiles))
+    print_tile_grid(
+      "Core Debug Status",
+      self.aie_debug_tiles,
+      register_values=[0xDEAD] * len(self.aie_debug_tiles),
+    )
 
   def read_core_execution_status(self):
     """
@@ -282,7 +287,11 @@ class TestImpl(BackendInterface):
     Returns:
       None
     """
-    print_tile_grid("Core Execution Status", self.aie_debug_tiles, register_values=[0xDEAD] * len(self.aie_debug_tiles))
+    print_tile_grid(
+      "Core Execution Status",
+      self.aie_debug_tiles,
+      register_values=[0xDEAD] * len(self.aie_debug_tiles),
+    )
 
   def read_all_core_pc(self):
     """

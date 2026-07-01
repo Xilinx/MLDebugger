@@ -651,7 +651,7 @@ def parse_overlay():
       overlay[t] = tile["dma_connectivity"]
   except FileNotFoundError:
     # Return empty overlay if not supported
-    #print("Overlay info not found for this Device.")
+    # print("Overlay info not found for this Device.")
     return {}
 
   return overlay

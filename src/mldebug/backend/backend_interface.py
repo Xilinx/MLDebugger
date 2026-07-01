@@ -186,7 +186,7 @@ class BackendInterface(ABC):
     """
 
   @abstractmethod
-  def read_aie_regs(self, reg)-> list[int]:
+  def read_aie_regs(self, reg) -> list[int]:
     """
     Reads a register in all of debug aie cores
 

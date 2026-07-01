@@ -117,7 +117,9 @@ class InteractiveController:
       self.design_info.update_work_dir(next_layer.layer_order)
       self.runner.schedule_layer_start(next_layer)
       m = f"Stepped from Layer:{layer.layer_order} {layer.stamps[0].name} Itr:{cur_it} -> "
-      LOGGER.log(m + f"Layer:{next_layer.layer_order} {next_layer.stamps[0].name} Itr:{1}", flush=False)
+      LOGGER.log(
+        m + f"Layer:{next_layer.layer_order} {next_layer.stamps[0].name} Itr:{1}", flush=False
+      )
     else:
       self.state.continue_to_finish = True
       print("[INFO] Reached the end of the design.")
@@ -141,7 +143,9 @@ class InteractiveController:
       current_layer_order = current_layer.layer_order
     final_layer_order = self.state.get_last_layer().layer_order
     if layer_num < current_layer_order or layer_num > final_layer_order:
-      print(f"[ERROR] Layer Out of bounds. Current: {current_layer_order} Final: {final_layer_order}")
+      print(
+        f"[ERROR] Layer Out of bounds. Current: {current_layer_order} Final: {final_layer_order}"
+      )
       return
 
     self.state.add_breakpoint(layer_num, iteration)

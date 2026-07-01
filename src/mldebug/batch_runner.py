@@ -31,8 +31,7 @@ class BatchRunner:
   as the execution backend for InteractiveController.
   """
 
-  def __init__(self, args, state, design_info, impls, aie_utls,
-               dumper, status_handle):
+  def __init__(self, args, state, design_info, impls, aie_utls, dumper, status_handle):
     """
     Args:
       args: Parsed command-line arguments.
@@ -129,7 +128,9 @@ class BatchRunner:
     """
     layer = self.state.layers[self.state.current_layer]
     # PM Load is not enabled for this stamp or this is last layer
-    if not self.design_info.work_dir.stamp(stamp_id).pm_reload_en or self.state.current_layer + 1 >= len(self.state.layers):
+    if not self.design_info.work_dir.stamp(
+      stamp_id
+    ).pm_reload_en or self.state.current_layer + 1 >= len(self.state.layers):
       return False
     # Stamp id doesn't run for this layer
     if not layer.runs_replica(stamp_id):
@@ -215,9 +216,7 @@ class BatchRunner:
         self.state.break_on_stamp_scheduled[sid] = True
         if pml:
           if not reaches_now:
-            LOGGER.log(
-              f"\nArming PM RELOAD on stamp {sid} for Layer_{target_layer.layer_order} "
-            )
+            LOGGER.log(f"\nArming PM RELOAD on stamp {sid} for Layer_{target_layer.layer_order} ")
           else:
             LOGGER.log(f"\nPM RELOAD on stamp: {sid}")
         skip_end_pc = not (self.args.run_flags.l1_ofm_dump and stamp.end_pc)
@@ -274,7 +273,9 @@ class BatchRunner:
     if not self.args.aie_only:
       layer = self.state.get_current_layer()
       if layer:
-        stamp_names = ", ".join([f"Stamp {i}: {stamp.name}" for i, stamp in enumerate(layer.stamps)])
+        stamp_names = ", ".join(
+          [f"Stamp {i}: {stamp.name}" for i, stamp in enumerate(layer.stamps)]
+        )
         LOGGER.log(f"Stopped at Start of Kernel(s): {stamp_names}")
         LOGGER.log(f"Current Layer: {layer.layer_order}, Iteration: {self.state.cur_it}")
         LOGGER.log(str(layer))
@@ -385,7 +386,8 @@ class BatchRunner:
       self.state.error = not utl.skip_iterations(target_itr - cur_it, sid)
     elif self.args.run_flags.skip_iter2:
       self.state.error = not utl.skip_iterations_to_lock_acq(
-         self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc, target_itr - cur_it, sid)
+        self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc, target_itr - cur_it, sid
+      )
     else:
       while cur_it < target_itr:
         self.hit_next_breakpoint(sid)
@@ -398,7 +400,9 @@ class BatchRunner:
           cur_it += 1
           self._process_end_breakpoint(layer, cur_it, sid)
         else:
-          print(f"[ERROR] Abort Execution of Stamp {sid}. PC List: {all_pc} doesn't match {stamp.start_pc}")
+          print(
+            f"[ERROR] Abort Execution of Stamp {sid}. PC List: {all_pc} doesn't match {stamp.start_pc}"
+          )
           self.state.error = True
           break
 
@@ -458,8 +462,10 @@ class BatchRunner:
     overlay = self.design_info.overlay
 
     for layer in self.state.update_layer():
-      LOGGER.log(f"Stepping to layer {layer.layer_order}: {layer.stamps[0].name},"
-                 f" stamps: {len(layer.stamps)}, iters {layer.lcp.num_iter}")
+      LOGGER.log(
+        f"Stepping to layer {layer.layer_order}: {layer.stamps[0].name},"
+        f" stamps: {len(layer.stamps)}, iters {layer.lcp.num_iter}"
+      )
       self.schedule_layer_start(layer)
       self.run_layer(layer)
 

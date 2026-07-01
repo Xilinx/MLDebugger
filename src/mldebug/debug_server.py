@@ -20,8 +20,12 @@ class DebugServer:
   """
 
   def __init__(
-    self, output_dir, is_testmode, subgraph_name="subgraph",
-    bind_addr=("127.0.0.1", 9000), connect_timeout=None,
+    self,
+    output_dir,
+    is_testmode,
+    subgraph_name="subgraph",
+    bind_addr=("127.0.0.1", 9000),
+    connect_timeout=None,
   ) -> None:
     """
     Initialize the DebugServer instance.
@@ -134,7 +138,9 @@ class DebugServer:
 
     filename = ""
     if self.subgraph_name:
-      filename = os.path.normpath(os.path.join(file_prefix, "spillBO_" + self.subgraph_name + "_id_0_" + name + ".bin"))
+      filename = os.path.normpath(
+        os.path.join(file_prefix, "spillBO_" + self.subgraph_name + "_id_0_" + name + ".bin")
+      )
     else:
       filename = os.path.normpath(os.path.join(file_prefix, name + ".bin"))
     padded_filename_bytes = self.pad_string(filename)

@@ -25,8 +25,8 @@ unsupported_superkernels = [
   # Stepping to this causes lock stall
   "mllib_graphs::resize_adf_wrapper",
   # This has many sublayers and needs to be better understood
-  "mllib_graphs::mha_type1::mha_adf_wrapper"
-  ]
+  "mllib_graphs::mha_type1::mha_adf_wrapper",
+]
 
 
 def _strip_template(name):
@@ -37,6 +37,7 @@ def _strip_template(name):
   """
   idx = name.find("<")
   return name[:idx] if idx != -1 else name
+
 
 # For now skip these kernels for end pc
 skip_end_pc_kernels = [
@@ -111,7 +112,9 @@ class Buffer:
     if "l1_ping" in entry:
       ping = entry["l1_ping"]
       pong = entry.get("l1_pong", ping)
-      self.l1 = L1Buffer(int(ping[0], 16), ping[1] * size_shift, int(pong[0], 16), pong[1] * size_shift)
+      self.l1 = L1Buffer(
+        int(ping[0], 16), ping[1] * size_shift, int(pong[0], 16), pong[1] * size_shift
+      )
 
     # Handle both "l2" format and "l2_ping/l2_pong" format
     l2_bufs_list = []
@@ -199,6 +202,7 @@ class Stamp:
       end_pc (int): End program counter.
       elf_name (str): Associated ELF object.
   """
+
   name: str
   start_pc: int = 0
   end_pc: int = 0
@@ -276,7 +280,9 @@ class Layer:
     # 1. Layers without any kernel should be skipped
     # 2. Unsupported superkernel should be skipped
     if info.get("is_concat") or not kname or any(k in kname for k in unsupported_superkernels):
-      LOGGER.verbose_print(f"[WARNING] unsupported kernel {kname} at Layer {self.layer_order} will be skipped.")
+      LOGGER.verbose_print(
+        f"[WARNING] unsupported kernel {kname} at Layer {self.layer_order} will be skipped."
+      )
       self.is_unsupported = True
       return
 
@@ -285,8 +291,14 @@ class Layer:
       for sid, stamp in enumerate(self.stamps):
         stamp.name = mladf_report.get_skname_for_bilo(self.layer_order, sid)
         stamp.elf_name = mladf_report.get_elfid_for_bilo(self.layer_order, sid)
-        if not stamp.name or stamp.elf_name == -1 or any(k in stamp.name for k in unsupported_superkernels):
-          LOGGER.verbose_print(f"[WARNING] unsupported kernel {stamp.name} at Layer {self.layer_order} will be skipped.")
+        if (
+          not stamp.name
+          or stamp.elf_name == -1
+          or any(k in stamp.name for k in unsupported_superkernels)
+        ):
+          LOGGER.verbose_print(
+            f"[WARNING] unsupported kernel {stamp.name} at Layer {self.layer_order} will be skipped."
+          )
           self.is_unsupported = True
           return
       self.lcp.num_iter = mladf_report._get_iters_for_bilo(self.layer_order)
@@ -396,7 +408,10 @@ class Layer:
           if size.get("type"):
             size_shift = SIZE_BYTES.get(size["type"], 1)
           buffer = L3Buffer(
-            name=full_l3_name, tensor_name=size.get("tensor_name"), size=int(size["size"] * size_shift), offset=None
+            name=full_l3_name,
+            tensor_name=size.get("tensor_name"),
+            size=int(size["size"] * size_shift),
+            offset=None,
           )
           if "ifm" in fm:
             self.l3_ifm_buffers.append(buffer)
@@ -406,7 +421,9 @@ class Layer:
           break
 
       if not is_substr:
-        raise RuntimeError(f"The sub-name {sub_name} is not in the list of full L3 names {l3_buffer_names}")
+        raise RuntimeError(
+          f"The sub-name {sub_name} is not in the list of full L3 names {l3_buffer_names}"
+        )
 
   def _initialize_l3_buffers(self, info, version):
     """
@@ -421,13 +438,18 @@ class Layer:
       if "ifm" in info:
         for _, entry in enumerate(info["ifm"], start=1):
           if "l3" in entry:
-            self._match_l3_buffer("ifm", entry["l3_buffer_names"], entry["l3"], SIZE_BYTES.get(entry.get("dtype"), 1))
+            self._match_l3_buffer(
+              "ifm", entry["l3_buffer_names"], entry["l3"], SIZE_BYTES.get(entry.get("dtype"), 1)
+            )
     else:
       fms = ["ifm", "ifm2", "ofm"]
       for name in fms:
         if name in info and "l3" in info[name]:
           self._match_l3_buffer(
-            name, info[name]["l3_buffer_names"], info[name]["l3"], SIZE_BYTES.get(info[name].get("dtype"), 1)
+            name,
+            info[name]["l3_buffer_names"],
+            info[name]["l3"],
+            SIZE_BYTES.get(info[name].get("dtype"), 1),
           )
 
   def _initialize_buffers(self, info, aie_iface, size_shift, version):
@@ -491,7 +513,9 @@ class LayerInfo:
     self.mladf_report = None
 
     has_bi = args.buffer_info and Path(args.buffer_info).is_file()
-    use_mladf = args.mladf_report and Path(args.mladf_report).is_file() and not args.run_flags.disable_tg
+    use_mladf = (
+      args.mladf_report and Path(args.mladf_report).is_file() and not args.run_flags.disable_tg
+    )
     data = None
     # 1. Parse the buffer info to get Layout
     if has_bi:
@@ -504,7 +528,9 @@ class LayerInfo:
     # 3. Parse mladf report.
     # TBD: memory optimize this as this json can be large
     if not args.aie_only and has_bi and use_mladf:
-      self.mladf_report = MladfReport(args.buffer_info, args.mladf_report, self.overlay.get_stampwidth())
+      self.mladf_report = MladfReport(
+        args.buffer_info, args.mladf_report, self.overlay.get_stampwidth()
+      )
     # 4. Initialize Layers
     if not args.aie_only:
       self._init_layers(data, args.aie_iface, num_stamps, num_batches)
@@ -514,12 +540,15 @@ class LayerInfo:
         if layer.pm_work_dir:
           path = os.path.join(args.aie_dir, layer.pm_work_dir)
           if layer.pm_work_dir not in self.x2_work_dirs:
-            self.x2_work_dirs[layer.pm_work_dir] = WorkDir(path, args.peano, self.overlay, self.aie_iface.ARCH_NAME)
+            self.x2_work_dirs[layer.pm_work_dir] = WorkDir(
+              path, args.peano, self.overlay, self.aie_iface.ARCH_NAME
+            )
           self.layer_workdir_map[layer.layer_order] = self.x2_work_dirs[layer.pm_work_dir]
       self.work_dir = next(iter(self.layer_workdir_map.values()))
     else:
-      self.work_dir = WorkDir(args.aie_dir, args.peano, self.overlay,
-                              self.aie_iface.ARCH_NAME, args.run_flags.dump_temps)
+      self.work_dir = WorkDir(
+        args.aie_dir, args.peano, self.overlay, self.aie_iface.ARCH_NAME, args.run_flags.dump_temps
+      )
 
     if not args.aie_only:
       # Set PC Value for layers
@@ -694,7 +723,7 @@ class LayerInfo:
               name=f"{orig_buffer.name}_stamp_{b}",
               tensor_name=orig_buffer.tensor_name,
               size=orig_buffer.size,
-              offset=None
+              offset=None,
             )
             layer.l3_buffers.append(stamped_buffer)
 
@@ -837,8 +866,9 @@ class LayerInfo:
     raw_layers = sorted(raw_layers.items(), key=lambda item: item[1]["layer_order"])
     for entry in raw_layers:
       info = entry[1]
-      layer = Layer(info, size_shift, version, aie_iface, num_stamps, self.mladf_report,
-                    num_batches=num_batches)
+      layer = Layer(
+        info, size_shift, version, aie_iface, num_stamps, self.mladf_report, num_batches=num_batches
+      )
       self.layers.append(layer)
 
   def _initialize_layers_from_workdir_x2(self, args):
@@ -863,7 +893,9 @@ class LayerInfo:
     # Resolve PCs once per stamp
     for sid in range(self.overlay.get_stamps_per_batch()):
       for layer in self.layers:
-        flist = list(self.layer_workdir_map[layer.layer_order].stamps[sid].aie_functions.values())[0]
+        flist = list(self.layer_workdir_map[layer.layer_order].stamps[sid].aie_functions.values())[
+          0
+        ]
         self.layer_workdir_map[layer.layer_order].stamps[sid].pm_reload_en = True
         for f in flist:
           if _strip_template(layer.stamps[sid].name.lower()) == _strip_template(f.name.lower()):
@@ -907,8 +939,7 @@ class LayerInfo:
       aiec_info = self.work_dir.stamp(sid)
       # Index functions by elf_id and stripped name for direct lookup.
       funcs_by_elf = {
-        elf_name.split("reloadable")[-1]:
-          {_strip_template(f.name.lower()): f for f in flist}
+        elf_name.split("reloadable")[-1]: {_strip_template(f.name.lower()): f for f in flist}
         for elf_name, flist in aiec_info.aie_functions.items()
       }
       for layer in self.layers:
@@ -923,10 +954,14 @@ class LayerInfo:
         elif aiec_info.pm_reload_en:
           # In buffer_info the flexml_ids might not be in order of stamps, so
           # match on flexml-id membership and name within the same ELF.
-          elf_id = next((e for e, fns in funcs_by_elf.items()
-                         if key in fns
-                         and any(i in aiec_info.elf_flxmlid_maps[e] for i in layer.flexml_ids)),
-                        None)
+          elf_id = next(
+            (
+              e
+              for e, fns in funcs_by_elf.items()
+              if key in fns and any(i in aiec_info.elf_flxmlid_maps[e] for i in layer.flexml_ids)
+            ),
+            None,
+          )
         else:
           elf_id = next((e for e, fns in funcs_by_elf.items() if key in fns), None)
 
@@ -947,13 +982,19 @@ class LayerInfo:
         if idx >= len(self.layers) - 1:
           layer.lcp.num_iter = 1
           break
-        next_layer_stamps = self.layers[idx+1].stamps
+        next_layer_stamps = self.layers[idx + 1].stamps
         if args.run_flags.multistamp:
-          if (layer.stamps[0].name != next_layer_stamps[0].name
+          if (
+            layer.stamps[0].name != next_layer_stamps[0].name
             and len(layer.stamps) == len(next_layer_stamps)
-            and all(layer.stamps[i].elf_name == next_layer_stamps[i].elf_name for i in range(len(layer.stamps)))
-            ):
+            and all(
+              layer.stamps[i].elf_name == next_layer_stamps[i].elf_name
+              for i in range(len(layer.stamps))
+            )
+          ):
             layer.lcp.num_iter = 1
-        elif (layer.stamps[0].name != next_layer_stamps[0].name
-            and layer.stamps[0].elf_name == next_layer_stamps[0].elf_name ):
+        elif (
+          layer.stamps[0].name != next_layer_stamps[0].name
+          and layer.stamps[0].elf_name == next_layer_stamps[0].elf_name
+        ):
           layer.lcp.num_iter = 1

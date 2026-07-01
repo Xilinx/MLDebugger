@@ -55,7 +55,9 @@ def create_backend(backend_type, config):
     try:
       xrt_mod = importlib.import_module("mldebug.backend.xrt_impl")
     except ModuleNotFoundError:
-      print("Unable to import Backend. Python 3.10 is required on Win/Linux and 3.12 on Embedded Linux.")
+      print(
+        "Unable to import Backend. Python 3.10 is required on Win/Linux and 3.12 on Embedded Linux."
+      )
       cleanup_and_exit(config.args, 1)
     except ImportError:
       print("Unable to import XRT. Please check install.")
@@ -69,6 +71,10 @@ def create_backend(backend_type, config):
   # core_dump (default)
   core_dump_mod = importlib.import_module("mldebug.backend.core_dump_impl")
   return core_dump_mod.CoreDumpImpl(
-    config.tiles, config.ctx_id, config.pid, config.device,
-    core_dump_file=config.core_dump_file, no_header=config.no_header,
+    config.tiles,
+    config.ctx_id,
+    config.pid,
+    config.device,
+    core_dump_file=config.core_dump_file,
+    no_header=config.no_header,
   )

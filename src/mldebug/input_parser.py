@@ -23,6 +23,7 @@ from mldebug.utils import LOGGER, cleanup_and_exit, input_with_timeout, is_aarch
 # Seconds to wait at interactive prompts before giving up and exiting.
 HW_CONTEXT_INPUT_TIMEOUT_S = 60
 
+
 @dataclass
 class RunFlags:
   """
@@ -74,7 +75,9 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
   # AIE Work dir, device, buffer info
   if subgraph_path and os.path.exists(args.vaiml_folder_path):
     args.aie_dir = subgraph_path + f"/{fsp}/aiecompiler/Work"
-    args.mladf_report = subgraph_path + f"/{fsp}/aiecompiler/Work/reports/mladf_compiler_report.json"
+    args.mladf_report = (
+      subgraph_path + f"/{fsp}/aiecompiler/Work/reports/mladf_compiler_report.json"
+    )
     args.buffer_info = subgraph_path + f"/{fsp}/buffer_info.json"
     args.flexmlrt_hsi = subgraph_path + f"/{fsp}/flexmlrt-hsi.json"
     args.debug_map_json = subgraph_path + f"/{fsp}/debug_map.json"
@@ -94,8 +97,8 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
   no_metadata = args.buffer_info is None or not os.path.exists(args.buffer_info)
   if (no_metadata or not os.path.exists(args.aie_dir)) and not args.aie_only:
     print("[INFO] Using Standalone mode.")
-    args.aie_only=True
-    args.interactive=True
+    args.aie_only = True
+    args.interactive = True
 
   # AIE interface for aie2p and aie2 are shared
   # We need to differentiate between them for a few items
@@ -127,7 +130,7 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     get_flag("mock_hang"),
     get_flag("dump_temps"),
     get_flag("multistamp"),
-    get_flag("disable_tg")
+    get_flag("disable_tg"),
   )
 
 
@@ -239,7 +242,7 @@ def set_device(args) -> None:
           args.device = AIE_DEV_PHX
     except (FileNotFoundError, KeyError):
       pass
-      #LOGGER.log("[INFO] Unable to detect device automatically.")
+      # LOGGER.log("[INFO] Unable to detect device automatically.")
   print(f"[INFO] Using AIE Device: {args.device}.", end=endmsg)
 
 
@@ -260,10 +263,14 @@ def print_hw_context_table(current_contexts: dict[str, dict[str, str]]) -> None:
   # LOGGER.log table data
   for context, context_data in current_contexts.items():
     columns_str = ", ".join(map(str, context_data["columns"]))
-    LOGGER.log(f"{context:<12} {columns_str:<30} {context_data['pid']:<12} {context_data['status']:<12}")
+    LOGGER.log(
+      f"{context:<12} {columns_str:<30} {context_data['pid']:<12} {context_data['status']:<12}"
+    )
 
 
-def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list[tuple[int, int]] | None:
+def _validate_contexts_with_read(
+  contexts: dict, device: str, aie_iface
+) -> list[tuple[int, int]] | None:
   """
   Validate ALL contexts by reading CORE_STATUS register (verifies register access)
 
@@ -285,7 +292,7 @@ def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list
   # Device-specific addresses: Telluride=0x38004, PHX/STX=0x32004
   test_reg = aie_iface.Core_registers["CORE_STATUS"]
   test_tiles = [(test_col, test_row)]
-  
+
   valid_contexts = []
   for ctx_id, ctx_info in contexts.items():
     backend = None
@@ -355,9 +362,11 @@ def check_hw_context(args) -> tuple[int, int]:
         }
 
     if not current_contexts:
-      print("Warning: xrt-smi could find no applications running. Please launch an application to use MLDebugger.")
+      print(
+        "Warning: xrt-smi could find no applications running. Please launch an application to use MLDebugger."
+      )
       raise FileNotFoundError
-    
+
     # Path 1: Single context found -> auto-select it
     if len(current_contexts) == 1:
       ctx = int(list(current_contexts.keys())[0])
@@ -365,7 +374,9 @@ def check_hw_context(args) -> tuple[int, int]:
       return ctx, pid
 
     # Path 2: Multiple contexts found -> validate all with register read test
-    print(f"[INFO] Found {len(current_contexts)} hardware context(s). Validating with register read test...")
+    print(
+      f"[INFO] Found {len(current_contexts)} hardware context(s). Validating with register read test..."
+    )
     valid_contexts = _validate_contexts_with_read(current_contexts, device, aie_iface)
 
     # Path 2a: No contexts passed validation -> prompt user for input
@@ -405,7 +416,9 @@ def check_hw_context(args) -> tuple[int, int]:
         ctx = int(selected_context_id)
         pid = int(valid_only[selected_context_id]["pid"])
       else:
-        LOGGER.log(f"Context ID {selected_context_id} not found. Valid options: {', '.join(valid_only.keys())}")
+        LOGGER.log(
+          f"Context ID {selected_context_id} not found. Valid options: {', '.join(valid_only.keys())}"
+        )
         cleanup_and_exit(args, 1)
       return ctx, pid
 
@@ -519,12 +532,15 @@ def get_subgraph(args) -> tuple[str, Subgraph]:
               "flag in vaiml_config in vitisai_config.json"
             )
           return model_folder_name, Subgraph(
-            folder_path=f"{vaiml_folder_path}/{model_folder_name}/{vaiml_subgraphs[0]}", name=vaiml_subgraphs[0]
+            folder_path=f"{vaiml_folder_path}/{model_folder_name}/{vaiml_subgraphs[0]}",
+            name=vaiml_subgraphs[0],
           )
         break
 
   if len(subgraphs) > 1:
-    raise RuntimeError("Error: Multi-partition design detected. Specify a partition in vitisai_config.json")
+    raise RuntimeError(
+      "Error: Multi-partition design detected. Specify a partition in vitisai_config.json"
+    )
   if len(subgraphs) == 0:
     raise RuntimeError("Error: No partition found in the input model folder")
   return model_folder_name, subgraphs[0]

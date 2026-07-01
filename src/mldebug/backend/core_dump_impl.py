@@ -13,6 +13,7 @@ from .backend_interface import BackendInterface
 
 try:
   from .xrt_backend import MlDebug
+
   HAS_XRT_BACKEND = True
 except ImportError:
   HAS_XRT_BACKEND = False
@@ -28,7 +29,7 @@ DEVICE_CONFIGS = {
     "numrows": 6,
     "numcols": 4,
     "shim_tile_block_size": 1024 * 1024,  # 1MB
-    "mem_tile_block_size": 1024 * 1024,   # 1MB
+    "mem_tile_block_size": 1024 * 1024,  # 1MB
     "core_tile_block_size": 1024 * 1024,  # 1MB
   },
   AIE_DEV_STX: {
@@ -57,11 +58,13 @@ DEVICE_CONFIGS = {
   },
 }
 
+
 class CoreDumpFallbackReader:
   """
   Pure Python fallback implementation for reading core dump files.
   Replicates the C++ CoreDumpDataAccessBackend logic.
   """
+
   def __init__(self, core_dump_file, dev_name, no_header=False):
     """
     Initialize the fallback reader
@@ -88,8 +91,9 @@ class CoreDumpFallbackReader:
     try:
       self.file_handle = open(self.filename, "rb")
     except PermissionError as e:
-      raise PermissionError(f"Permission denied: Cannot open core dump file '{self.filename}'."
-                            " Check file permissions.") from e
+      raise PermissionError(
+        f"Permission denied: Cannot open core dump file '{self.filename}'. Check file permissions."
+      ) from e
     except OSError as e:
       raise OSError(f"Failed to open core dump file '{self.filename}': {e}") from e
     except Exception as e:
@@ -147,8 +151,9 @@ class CoreDumpFallbackReader:
       return None
 
     version_num, header_size = struct.unpack("<II", header[:8])
-    hw_gen, core_row_start, mem_row_start, mem_tile_rows, total_rows, total_cols = (
-      struct.unpack("<BBBBBB", header[8:14]))
+    hw_gen, core_row_start, mem_row_start, mem_tile_rows, total_rows, total_cols = struct.unpack(
+      "<BBBBBB", header[8:14]
+    )
 
     detected = None
     for name, cfg in DEVICE_CONFIGS.items():
@@ -156,7 +161,7 @@ class CoreDumpFallbackReader:
         detected = name
         break
 
-    print( "[INFO] Core dump header:")
+    print("[INFO] Core dump header:")
     print(f"  Magic: {magic.decode('ascii', errors='ignore').rstrip(chr(0))}")
     print(f"  Version: {version_num}")
     print(f"  Header size: {header_size} bytes")
@@ -182,11 +187,15 @@ class CoreDumpFallbackReader:
 
       magic = self.file_handle.read(4)
       if len(magic) != 4:
-        raise RuntimeError("Core dump file is too small or corrupted: cannot read header magic number")
+        raise RuntimeError(
+          "Core dump file is too small or corrupted: cannot read header magic number"
+        )
 
-      magic_str = magic.decode('ascii', errors='ignore').rstrip('\x00')
+      magic_str = magic.decode("ascii", errors="ignore").rstrip("\x00")
       if magic_str != "NPU":
-        raise ValueError(f"Invalid core dump file format: expected magic number 'NPU', got '{magic_str}'")
+        raise ValueError(
+          f"Invalid core dump file format: expected magic number 'NPU', got '{magic_str}'"
+        )
 
       # Skip versionNum (4 bytes); read headerSize (4 bytes, little-endian uint32).
       if len(self.file_handle.read(4)) != 4:
@@ -198,7 +207,9 @@ class CoreDumpFallbackReader:
       self.header_size = struct.unpack("<I", header_size_data)[0]
 
       if self.header_size < 18 or self.header_size > 1024 * 1024:
-        raise ValueError(f"Invalid header size in core dump: {self.header_size} bytes (expected 18-1048576)")
+        raise ValueError(
+          f"Invalid header size in core dump: {self.header_size} bytes (expected 18-1048576)"
+        )
 
     except (ValueError, RuntimeError) as e:
       raise ValueError("I/O error while reading core dump header") from e
@@ -227,9 +238,11 @@ class CoreDumpFallbackReader:
     core_row_start = self.metadata["core_row_start"]
 
     # Calculate tower size (one column's worth of tiles)
-    tower_size = (shim_tile_block_size +
-                  mem_tile_block_size * memtile_rows +
-                  core_tile_block_size * (self.metadata["numrows"] - core_row_start))
+    tower_size = (
+      shim_tile_block_size
+      + mem_tile_block_size * memtile_rows
+      + core_tile_block_size * (self.metadata["numrows"] - core_row_start)
+    )
 
     # Calculate tile position index based on row type
     if row == 0:
@@ -240,10 +253,12 @@ class CoreDumpFallbackReader:
       tile_pos_index = col * tower_size + shim_tile_block_size + (row - 1) * mem_tile_block_size
     else:
       # Core tile
-      tile_pos_index = (col * tower_size +
-                        shim_tile_block_size +
-                        mem_tile_block_size * memtile_rows +
-                        (row - 1 - memtile_rows) * core_tile_block_size)
+      tile_pos_index = (
+        col * tower_size
+        + shim_tile_block_size
+        + mem_tile_block_size * memtile_rows
+        + (row - 1 - memtile_rows) * core_tile_block_size
+      )
 
     file_position = self.header_size + tile_pos_index + offset
     return file_position
@@ -315,13 +330,15 @@ class CoreDumpFallbackReader:
 
       # Unpack as little-endian uint32 array
       for i in range(num_words):
-        word = struct.unpack("<I", data[i*4:(i+1)*4])[0]
+        word = struct.unpack("<I", data[i * 4 : (i + 1) * 4])[0]
         result.append(word)
 
       return result
 
     except Exception as e:
-      print(f"[ERROR] Failed to dump buffer at col={col}, row={row}, offset=0x{offset:x}, size={size}: {e}")
+      print(
+        f"[ERROR] Failed to dump buffer at col={col}, row={row}, offset=0x{offset:x}, size={size}: {e}"
+      )
       return [0] * num_words
 
 
@@ -332,7 +349,10 @@ class CoreDumpImpl(BackendInterface):
   """
 
   is_offline = True
-  def __init__(self, aie_overlay_tiles, ctx_id, pid, dev_name, core_dump_file=None, no_header=False) -> None:
+
+  def __init__(
+    self, aie_overlay_tiles, ctx_id, pid, dev_name, core_dump_file=None, no_header=False
+  ) -> None:
     """
     Initialize the Core Dump backend
 
@@ -356,13 +376,15 @@ class CoreDumpImpl(BackendInterface):
 
     if no_header or not HAS_XRT_BACKEND:
       # Python fallback reader is required to support headerless parsing
-      #print("[INFO] --no_header specified: using Python fallback reader "
+      # print("[INFO] --no_header specified: using Python fallback reader "
       #      "(C++ binding does not support headerless mode)")
       self.use_fallback = True
     else:
       # Try to initialize the C++ binding first
       try:
-        self.binding = MlDebug(list(self.overlay_aie_core_tiles), ctx_id, pid, dev_name, "debuglibrary", core_dump_file)
+        self.binding = MlDebug(
+          list(self.overlay_aie_core_tiles), ctx_id, pid, dev_name, "debuglibrary", core_dump_file
+        )
         print("[INFO] Core Dump backend initialized with C++ DebugLibrary")
       except (ImportError, TypeError):
         self.use_fallback = True
@@ -402,7 +424,9 @@ class CoreDumpImpl(BackendInterface):
     """
     Configure performance counters - NOT SUPPORTED in core dump mode
     """
-    print("[WARNING] configure_performance_counters() is not supported in core dump mode (read-only)")
+    print(
+      "[WARNING] configure_performance_counters() is not supported in core dump mode (read-only)"
+    )
 
   def set_performance_counter_halt(self):
     """

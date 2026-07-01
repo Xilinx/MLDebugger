@@ -10,6 +10,7 @@ import re
 
 from pathlib import Path
 
+
 def load_json(path):
   """
   utility
@@ -21,10 +22,12 @@ def load_json(path):
     print(e)
     return {}
 
+
 class MladfReport:
   """
   Encapsulates MLADF Details
   """
+
   def __init__(self, bi_file, m2_file, cps=4):
     """
     bi_file: path to buffer_info.json
@@ -53,7 +56,7 @@ class MladfReport:
     """
     aiec_layers = self.get_aiec_layers_by_bilo(bilo)
     if aiec_layers:
-      core = f"{sid*self.cps}_0"
+      core = f"{sid * self.cps}_0"
       if aiec_layers[0]["core_information"].get(core):
         try:
           kname = aiec_layers[0]["core_information"][core]["kernel_name"]
@@ -84,7 +87,7 @@ class MladfReport:
     if not aiec_layers:
       return -1
 
-    core = f"{sid*self.cps}_0"
+    core = f"{sid * self.cps}_0"
     pm_info = {}
     if aiec_layers[0]["core_information"].get(core):
       pm_info = aiec_layers[0]["core_information"][core].get("pm_information", {})
@@ -115,12 +118,12 @@ class MladfReport:
       if not inst:
         continue
 
-      flexml_match = re.search(r'(flexml_layers\[\d+\])', inst)
+      flexml_match = re.search(r"(flexml_layers\[\d+\])", inst)
       if flexml_match:
         parents.add(flexml_match.group(1))
         continue
 
-      flexml_flat = re.search(r'flexml_layer_(\d+)', inst)
+      flexml_flat = re.search(r"flexml_layer_(\d+)", inst)
       if flexml_flat:
         parents.add(f"flexml_layers[{flexml_flat.group(1)}]")
         continue
@@ -128,14 +131,14 @@ class MladfReport:
       parts = inst.split(".")
       found = False
       for part in parts:
-        if re.search(r'_layer_\d+', part) and "_mk[" not in part:
-          parent = re.sub(r'_layer_\d+$', '', part)
+        if re.search(r"_layer_\d+", part) and "_mk[" not in part:
+          parent = re.sub(r"_layer_\d+$", "", part)
           parents.add(parent)
           found = True
           break
 
       if not found and len(parts) >= 2:
-        candidate = re.sub(r'^compute_graph\.', '', inst).split(".")[0]
+        candidate = re.sub(r"^compute_graph\.", "", inst).split(".")[0]
         if candidate:
           parents.add(candidate)
 
@@ -147,7 +150,7 @@ class MladfReport:
       # strip regex below handles inner names like `..._layer_0_0[0]` too.
       for part in parts:
         if part.startswith("templated_graph_"):
-          outer = re.sub(r'_layer_\d+(?:_\d+)*(?:\[\d+\])?$', '', part)
+          outer = re.sub(r"_layer_\d+(?:_\d+)*(?:\[\d+\])?$", "", part)
           parents.add(outer)
           break
 
@@ -160,8 +163,8 @@ class MladfReport:
     "compute_graph.flexml_layers[3]"
       -> "flexml_layers[3]"
     """
-    stripped = re.sub(r'^compute_graph\.', '', name)
-    parent = re.sub(r'_layer_\d+$', '', stripped)
+    stripped = re.sub(r"^compute_graph\.", "", name)
+    parent = re.sub(r"_layer_\d+$", "", stripped)
     return parent
 
   def _approach1_map(self, bi_layers, m2_layers):
@@ -190,4 +193,3 @@ class MladfReport:
           bi_to_m2[bi_key].append(m2_key)
 
     return bi_to_m2
-
