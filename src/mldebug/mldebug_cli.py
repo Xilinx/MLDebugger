@@ -296,7 +296,8 @@ def app():
     dest="exec_cmd",
     default=None,
     metavar="<command>",
-    help="Execute a command in the advanced shell (-s) and exit.",
+    help=argparse.SUPPRESS,
+    # help="Execute a command in the advanced shell (-s) and exit.",
   )
   p.add_argument(
     "--load_script",
