@@ -7,13 +7,18 @@ This module exposes mldebugger functionality to external python clients
 
 import os
 import importlib
+from types import SimpleNamespace
 
 from mldebug.aie_status import AIEStatus as _AIES
 from mldebug.arch import AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL
 from mldebug.arch import load_aie_arch as _load_aie
 from mldebug.aie_overlay import Overlay as _OL
+from mldebug.input_parser import RunFlags as _RunFlags
 from mldebug.input_parser import check_hw_context as _check_hwc
 from mldebug.input_parser import check_registry_keys as _check_reg
+
+BACKEND_XRT = "xrt"
+BACKEND_TEST = "test"
 
 
 class MLDebug:
@@ -23,9 +28,10 @@ class MLDebug:
                        AIE_DEV_STX
                        AIE_DEV_TEL
   Overlay(str): Overlay in the form: cxr
+  backend(str): BACKEND_XRT (default) or BACKEND_TEST for the CI simulator
   ctxid(int): context id of the xrt process. If not passed, it is detected automatically
   pid(int): pid of the xrt process. If not passed, it is detected automatically
-  Note: Only XRT Backend is supported
+  Note: XRT backend requires Python 3.10 and a live hardware context.
   """
 
   # Parse overlay string to create layout array [stamps, ncol, nrow]
@@ -53,33 +59,50 @@ class MLDebug:
           print(f"Warning: Unexpected overlay format '{overlay_str}', using default [1, 4, 4]")
           return [1, 4, 4]
 
-  def __init__(self, device=AIE_DEV_STX, overlay="4x4", ctxid=None, pid=None):
-    if os.name == "nt":
-      _check_reg()
-    if ctxid is None or pid is None:
-      ctxid, pid = _check_hwc(device)  # Fixed: pass device parameter to check_hw_context
-    # Initialize Debug
-    try:
-      xrt_impl = importlib.import_module("mldebug.backend.xrt_impl")
-    except ModuleNotFoundError as e:
-      raise RuntimeError("Unable to import XRT Backend. Please check if python version is 3.10.") from e
-    except ImportError as e:
-      raise RuntimeError("Unable to import XRT Backend. Please check XRT Installation.") from e
+  def __init__(self, device=AIE_DEV_STX, overlay="4x4", ctxid=None, pid=None, backend=BACKEND_XRT):
+    if backend not in (BACKEND_XRT, BACKEND_TEST):
+      raise ValueError(f"Unsupported backend '{backend}'. Use BACKEND_XRT or BACKEND_TEST.")
+    self.backend = backend
     self.aie_iface = _load_aie(device)
+    self.aie_iface.init(device == AIE_DEV_PHX)
 
-    # Create a proper args-like object for Overlay constructor
+    if backend == BACKEND_XRT:
+      args = SimpleNamespace(device=device, aie_iface=self.aie_iface, l3=False)
+      if os.name == "nt":
+        _check_reg(args)
+      if ctxid is None or pid is None:
+        ctxid, pid = _check_hwc(args)
+
     class OverlayArgs:
       def __init__(self, aie_iface, overlay_string):
         self.aie_iface = aie_iface
         self.overlay = overlay_string
 
     overlay_args = OverlayArgs(self.aie_iface, overlay)
-
     layout = self.parse_overlay_string(overlay)
     self._ov_hdl = _OL(overlay_args, layout)
-
     tiles = self._ov_hdl.get_tiles(self.aie_iface.AIE_TILE_T, stamp_id=0)
-    self._be = xrt_impl.XRTImpl(tiles, ctxid, pid, device)
+
+    if backend == BACKEND_TEST:
+      test_impl = importlib.import_module("mldebug.backend.test_impl")
+      test_args = SimpleNamespace(
+        aie_only=True,
+        run_flags=_RunFlags(
+          False, False, False, False, False, False,
+          False, False, False, False, False, False,
+        ),
+      )
+      design = SimpleNamespace(layers=[])
+      self._be = test_impl.TestImpl(tiles, design, test_args)
+    else:
+      try:
+        xrt_impl = importlib.import_module("mldebug.backend.xrt_impl")
+      except ModuleNotFoundError as e:
+        raise RuntimeError("Unable to import XRT Backend. Please check if python version is 3.10.") from e
+      except ImportError as e:
+        raise RuntimeError("Unable to import XRT Backend. Please check XRT Installation.") from e
+      self._be = xrt_impl.XRTImpl(tiles, ctxid, pid, device)
+
     self._st_hdl = _AIES(self._be, self._ov_hdl.get_tiles, self.aie_iface, overlay)
 
     # Expose be functionality

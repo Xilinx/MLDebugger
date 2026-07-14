@@ -158,12 +158,17 @@ def launch_debug(args, output_dir):
     handle.status_handle.get(args.dump_aie_status, advanced=True, guidance=False)
     print(f"[INFO] Advanced AIE status written to {args.dump_aie_status}")
     return
+  prompt = InteractivePrompt(handle)
+  if args.load_script is not None:
+    prompt.load_script(args.load_script)
   if args.exec_cmd is not None:
-    InteractivePrompt(handle).exec_cmd(args.exec_cmd)
+    prompt.exec_cmd(args.exec_cmd)
     return
   # Launch Debug
   if args.interactive:
-    InteractivePrompt(handle).run()
+    prompt.run()
+  elif args.load_script is not None:
+    return
   else:
     handle.execute_and_dump()
 
@@ -292,6 +297,14 @@ def app():
     default=None,
     metavar="<command>",
     help="Execute a command in the advanced shell (-s) and exit.",
+  )
+  p.add_argument(
+    "--load_script",
+    dest="load_script",
+    default=None,
+    metavar="<filename>",
+    help="Execute a Python script in the advanced shell namespace.\n"
+    "Exits after the script unless -i or -s is also specified.\n",
   )
   p.add_argument(
     "-e",
