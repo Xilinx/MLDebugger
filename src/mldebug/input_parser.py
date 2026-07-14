@@ -85,6 +85,19 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     args.fsp = fsp
     args.last_fsp = args.fsp == args.fsp_execution_order[-1]
 
+    # Auto-detect peano compiler from compile_flags.json if not explicitly set
+    if not args.peano:
+      compile_flags_path = subgraph_path + "/compile_flags.json"
+      if os.path.exists(compile_flags_path):
+        try:
+          with open(compile_flags_path, 'r', encoding='utf8') as f:
+            compile_flags = json.load(f)
+            if compile_flags.get("aie_single_core_compiler") == "peano":
+              args.peano = True
+              LOGGER.log(f"[INFO] Detected peano compiler from compile_flags.json")
+        except (json.JSONDecodeError, IOError) as e:
+          LOGGER.log(f"[WARNING] Failed to parse compile_flags.json: {e}")
+
   if args.x2_folder_path and os.path.exists(args.x2_folder_path):
     args.aie_dir = args.x2_folder_path
     args.buffer_info = args.x2_folder_path + "/buffer_info.json"
