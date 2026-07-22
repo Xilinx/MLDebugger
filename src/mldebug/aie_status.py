@@ -148,7 +148,6 @@ class AIEStatus:
       _hex: Save register values as hex strings if True.
       simple: Just print register values. hex or not
     """
-    extra_meta = ""
     if rtype not in self.results[mtype].keys():
       self.results[mtype][rtype] = []
     for c, r in self.get_debug_tiles(mtype, raw=True):
@@ -161,9 +160,9 @@ class AIEStatus:
           if _hex:
             regdata = hex(regdata)
           if not simple:
-            self.results[mtype][rtype].append((name, c, r, regdata, extra_meta, parsed_reg))
+            self.results[mtype][rtype].append((name, c, r, regdata, "", parsed_reg))
           else:
-            self.results[mtype][rtype].append(("",c, r, regdata))
+            self.results[mtype][rtype].append(("" ,c, r, regdata))
       else:
         regdata = []
         for name, reg in regs:
