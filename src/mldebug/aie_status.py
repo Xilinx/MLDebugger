@@ -136,7 +136,7 @@ class AIEStatus:
         regdata = filtered_regdata
         self.results[mtype][table].append((rsearch, c, r, regdata))
 
-  def append_status(self, mtype, rtype, regs, coalesce=False, _hex=True):
+  def append_status(self, mtype, rtype, regs, coalesce=False, _hex=True, simple=False):
     """
     Get and append status for a module type to results.
 
@@ -146,8 +146,8 @@ class AIEStatus:
       regs: List or tuple of (register name, register address) pairs.
       coalesce: Save results on a per tile basis if True.
       _hex: Save register values as hex strings if True.
+      simple: Just print register values. hex or not
     """
-    extra_meta = ""
     if rtype not in self.results[mtype].keys():
       self.results[mtype][rtype] = []
     for c, r in self.get_debug_tiles(mtype, raw=True):
@@ -159,7 +159,10 @@ class AIEStatus:
           parsed_reg = self.aie_iface.parse_register(name, regdata)
           if _hex:
             regdata = hex(regdata)
-          self.results[mtype][rtype].append((name, c, r, regdata, extra_meta, parsed_reg))
+          if not simple:
+            self.results[mtype][rtype].append((name, c, r, regdata, "", parsed_reg))
+          else:
+            self.results[mtype][rtype].append(("" ,c, r, regdata))
       else:
         regdata = []
         for name, reg in regs:
@@ -423,6 +426,12 @@ class AIEStatus:
         self._get_advanced_metrics(ttype, regmap, advanced)
       if ttype == self.aie_iface.MEM_TILE_T:
         self._get_advanced_metrics(ttype, self.aie_iface.Memory_tile_registers, advanced)
+
+        extra_metrics = ["SPARE_REG"]
+        regmap = self.aie_iface.Memory_tile_registers
+        for rtype in extra_metrics:
+          regs = [(k, v) for k, v in regmap.items() if rtype in k]
+          self.append_status(ttype, rtype, regs, _hex=False, simple=True)
       # Shim Microcontroller
       if ttype == self.aie_iface.SHIM_TILE_T:
         regmap = self.aie_iface.Shim_tile_registers
