@@ -831,11 +831,17 @@ class LayerInfo:
     # S (per-batch stamps used) comes from max_stamps_used, with sensible
     # fallbacks: layer hints, then the overlay's nominal stamp count.
     stamps = data[".meta"].get("max_stamps_used")
+
+    # Stamp group results in one stamp being used as N stamps
+    max_stamp_group_size = data[".meta"].get("max_stamp_group_size", 1)
+
     if not stamps:
       if data.get("layers"):
         stamps = max(lyr.get("no_of_stamps", 1) for _, lyr in data["layers"].items())
       else:
         stamps = overlay_stamps
+
+    stamps = stamps // max_stamp_group_size
 
     self.layout = (batches, stamps, nrow, ncol)
     if batches > 1:
