@@ -521,7 +521,9 @@ class LayerInfo:
     if has_bi:
       data = self._read_buffer_info(args.buffer_info)
     # 2. Initialize Overlay from Layout
-    self.overlay = Overlay(args, self.layout)
+    self.overlay = Overlay(
+      args.aie_iface, self.layout, overlay=args.overlay, multistamp=args.run_flags.multistamp
+    )
     # Re-sync local view in case Overlay applied -o overrides.
     num_batches = self.overlay.get_batch_count()
     num_stamps = self.overlay.get_stamps_per_batch()
