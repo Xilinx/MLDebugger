@@ -10,7 +10,7 @@ import importlib
 from types import SimpleNamespace
 
 from mldebug.aie_status import AIEStatus as _AIES
-from mldebug.arch import AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL
+from mldebug.arch import AIE_DEV_PHX, AIE_DEV_STX
 from mldebug.arch import load_aie_arch as _load_aie
 from mldebug.aie_overlay import Overlay as _OL
 from mldebug.input_parser import RunFlags as _RunFlags
@@ -37,27 +37,27 @@ class MLDebug:
   # Parse overlay string to create layout array [stamps, ncol, nrow]
   @staticmethod
   def parse_overlay_string(overlay_str):
-      """
-      Parse overlay string and convert to layout array.
-      Examples:
-        "4x4" -> [1, 4, 4]     (default 1 stamp)
-        "2x4x4" -> [2, 4, 4]   (2 stamps, 4 cols, 4 rows)
-        "1x8x8" -> [1, 8, 8]   (1 stamp, 8 cols, 8 rows)
-      """
-      parts = overlay_str.split('x')
+    """
+    Parse overlay string and convert to layout array.
+    Examples:
+      "4x4" -> [1, 4, 4]     (default 1 stamp)
+      "2x4x4" -> [2, 4, 4]   (2 stamps, 4 cols, 4 rows)
+      "1x8x8" -> [1, 8, 8]   (1 stamp, 8 cols, 8 rows)
+    """
+    parts = overlay_str.split('x')
 
-      if len(parts) == 2:
-          # Format: "4x4" (cols x rows, default to 1 stamp)
-          cols, rows = map(int, parts)
-          return [1, cols, rows]
-      elif len(parts) == 3:
-          # Format: "2x4x4" (stamps x cols x rows)
-          stamps, cols, rows = map(int, parts)
-          return [stamps, cols, rows]
-      else:
-          # Fallback to default if format is unexpected
-          print(f"Warning: Unexpected overlay format '{overlay_str}', using default [1, 4, 4]")
-          return [1, 4, 4]
+    if len(parts) == 2:
+      # Format: "4x4" (cols x rows, default to 1 stamp)
+      cols, rows = map(int, parts)
+      return [1, cols, rows]
+    elif len(parts) == 3:
+      # Format: "2x4x4" (stamps x cols x rows)
+      stamps, cols, rows = map(int, parts)
+      return [stamps, cols, rows]
+    else:
+      # Fallback to default if format is unexpected
+      print(f"Warning: Unexpected overlay format '{overlay_str}', using default [1, 4, 4]")
+      return [1, 4, 4]
 
   def __init__(self, device=AIE_DEV_STX, overlay="4x4", ctxid=None, pid=None, backend=BACKEND_XRT):
     if backend not in (BACKEND_XRT, BACKEND_TEST):
@@ -73,14 +73,8 @@ class MLDebug:
       if ctxid is None or pid is None:
         ctxid, pid = _check_hwc(args)
 
-    class OverlayArgs:
-      def __init__(self, aie_iface, overlay_string):
-        self.aie_iface = aie_iface
-        self.overlay = overlay_string
-
-    overlay_args = OverlayArgs(self.aie_iface, overlay)
     layout = self.parse_overlay_string(overlay)
-    self._ov_hdl = _OL(overlay_args, layout)
+    self._ov_hdl = _OL(self.aie_iface, layout, overlay=overlay)
     tiles = self._ov_hdl.get_tiles(self.aie_iface.AIE_TILE_T, stamp_id=0)
 
     if backend == BACKEND_TEST:

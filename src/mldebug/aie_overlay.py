@@ -21,21 +21,25 @@ class Overlay:
   refers to as "sid" (stamp id).
   """
 
-  def __init__(self, args, layout):
+  def __init__(self, aie_iface, layout, overlay=None, multistamp=False):
     """
     Initialize the Overlay with layout and tile information.
 
     Args:
-      args: Argument object containing configuration options, including
-        aie_iface and overlay string.
+      aie_iface: AIE architecture interface providing tile-type constants and
+        helpers (row offset, filter_tiles).
       layout: Tuple representing the layout from buffer_info. Either
         (batches, stamps, nrow, ncol) (new 4-element form) or
         (stamps, nrow, ncol) (legacy; treated as batches=1).
+      overlay (str, optional): User-specified overlay override string (e.g.
+        '2x4x4' or '4x4'). Forces batches=1 when supplied.
+      multistamp (bool, optional): When False, collapse to a single active
+        replica. Defaults to False.
     """
-    self.aie_iface = args.aie_iface
+    self.aie_iface = aie_iface
     self.stamps = {}
     self.impls = {}
-    batches, stamps_per_batch, ncol, nrow = self._get_layout(args.overlay, layout)
+    batches, stamps_per_batch, ncol, nrow = self._get_layout(overlay, layout)
 
     # Materialize tiles for every physical replica so dropped ones stay quiescible.
     for b in range(batches):
@@ -50,7 +54,7 @@ class Overlay:
 
     # Without `multistamp`, collapse to one active replica so LayerInfo/DebugState/
     # backends size to it; extras stay in self.stamps (see get_inactive_tiles).
-    if args.run_flags.multistamp:
+    if multistamp:
       self.layout = (batches, stamps_per_batch, ncol, nrow)
     else:
       self.layout = (1, 1, ncol, nrow)

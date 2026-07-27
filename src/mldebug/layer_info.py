@@ -521,7 +521,9 @@ class LayerInfo:
     if has_bi:
       data = self._read_buffer_info(args.buffer_info)
     # 2. Initialize Overlay from Layout
-    self.overlay = Overlay(args, self.layout)
+    self.overlay = Overlay(
+      args.aie_iface, self.layout, overlay=args.overlay, multistamp=args.run_flags.multistamp
+    )
     # Re-sync local view in case Overlay applied -o overrides.
     num_batches = self.overlay.get_batch_count()
     num_stamps = self.overlay.get_stamps_per_batch()
@@ -829,11 +831,17 @@ class LayerInfo:
     # S (per-batch stamps used) comes from max_stamps_used, with sensible
     # fallbacks: layer hints, then the overlay's nominal stamp count.
     stamps = data[".meta"].get("max_stamps_used")
+
+    # Stamp group results in one stamp being used as N stamps
+    max_stamp_group_size = data[".meta"].get("max_stamp_group_size", 1)
+
     if not stamps:
       if data.get("layers"):
         stamps = max(lyr.get("no_of_stamps", 1) for _, lyr in data["layers"].items())
       else:
         stamps = overlay_stamps
+
+    stamps = stamps // max_stamp_group_size
 
     self.layout = (batches, stamps, nrow, ncol)
     if batches > 1:
