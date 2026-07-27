@@ -26,6 +26,8 @@ unsupported_superkernels = [
   "mllib_graphs::resize_adf_wrapper",
   # This has many sublayers and needs to be better understood
   "mllib_graphs::mha_type1::mha_adf_wrapper",
+  # Causes failure. TODO: investigate
+  "superkernel_eltunary",
 ]
 
 
