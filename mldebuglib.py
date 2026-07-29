@@ -10,7 +10,7 @@ import importlib
 from types import SimpleNamespace
 
 from mldebug.aie_status import AIEStatus as _AIES
-from mldebug.arch import AIE_DEV_PHX, AIE_DEV_STX
+from mldebug.arch import AIE_DEV_STX
 from mldebug.arch import load_aie_arch as _load_aie
 from mldebug.aie_overlay import Overlay as _OL
 from mldebug.input_parser import RunFlags as _RunFlags
@@ -64,7 +64,7 @@ class MLDebug:
       raise ValueError(f"Unsupported backend '{backend}'. Use BACKEND_XRT or BACKEND_TEST.")
     self.backend = backend
     self.aie_iface = _load_aie(device)
-    self.aie_iface.init(device == AIE_DEV_PHX)
+    self.aie_iface.init(device)
 
     if backend == BACKEND_XRT:
       args = SimpleNamespace(device=device, aie_iface=self.aie_iface, l3=False)

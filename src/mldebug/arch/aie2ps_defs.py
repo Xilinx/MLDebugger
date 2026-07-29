@@ -7,6 +7,8 @@ AIE2PS Specific Defs
 
 import json
 
+from .device_configs import DEVICE_CONFIGS
+
 AIE_TILE_T = "aie_tile"
 SHIM_TILE_T = "shim_tile"
 MEM_TILE_T = "mem_tile"
@@ -128,11 +130,19 @@ Core_registers = {
 }
 
 
-def init(_):
+def init(device=None):
   """
-  consistent interface with aie2p
+  Apply device/variant geometry from the central registry.
+
+  `device` is the resolved sub-device name (e.g. 'telluride' or 't50');
+  it selects AIE_TILE_ROW_OFFSET (= core_row_start) and MEM_TILE_SZ so
+  same-hwGen variants can differ in geometry.
   """
-  return
+  global AIE_TILE_ROW_OFFSET, MEM_TILE_SZ
+  cfg = DEVICE_CONFIGS.get(device)
+  if cfg:
+    AIE_TILE_ROW_OFFSET = cfg["core_row_start"]
+    MEM_TILE_SZ = cfg["mem_tile_sz"]
 
 
 _create_bds(AIE_TILE_T, Core_registers)

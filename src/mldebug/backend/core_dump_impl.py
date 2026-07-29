@@ -7,8 +7,10 @@ Core Dump Backend - Read-only backend for analyzing core dumps
 
 import struct
 from pathlib import Path
+
+from mldebug.arch import DEVICE_CONFIGS, resolve_variant
 from mldebug.utils import print_tile_grid
-from mldebug.arch import AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3
+
 from .backend_interface import BackendInterface
 
 try:
@@ -17,46 +19,6 @@ try:
   HAS_XRT_BACKEND = True
 except ImportError:
   HAS_XRT_BACKEND = False
-
-# Device architecture metadata (from C++ CoreDumpDataAccessBackend)
-DEVICE_CONFIGS = {
-  AIE_DEV_PHX: {
-    "hwGen": 2,
-    "baseAddr": 0x0,
-    "core_row_start": 2,
-    "mem_row_start": 1,
-    "memtile_rows": 1,
-    "numrows": 6,
-    "numcols": 4,
-    "shim_tile_block_size": 1024 * 1024,  # 1MB
-    "mem_tile_block_size": 1024 * 1024,  # 1MB
-    "core_tile_block_size": 1024 * 1024,  # 1MB
-  },
-  AIE_DEV_STX: {
-    "hwGen": 4,
-    "baseAddr": 0x0,
-    "core_row_start": 2,
-    "mem_row_start": 1,
-    "memtile_rows": 1,
-    "numrows": 6,
-    "numcols": 8,
-    "shim_tile_block_size": 1024 * 1024,
-    "mem_tile_block_size": 1024 * 1024,
-    "core_tile_block_size": 1024 * 1024,
-  },
-  AIE_DEV_TEL: {
-    "hwGen": 5,
-    "baseAddr": 0x0,
-    "core_row_start": 3,
-    "mem_row_start": 1,
-    "memtile_rows": 2,
-    "numrows": 7,
-    "numcols": 36,
-    "shim_tile_block_size": 1024 * 1024,
-    "mem_tile_block_size": 1024 * 1024,
-    "core_tile_block_size": 1024 * 1024,
-  },
-}
 
 
 class CoreDumpFallbackReader:
@@ -155,11 +117,9 @@ class CoreDumpFallbackReader:
       "<BBBBBB", header[8:14]
     )
 
-    detected = None
-    for name, cfg in DEVICE_CONFIGS.items():
-      if cfg["hwGen"] == hw_gen:
-        detected = name
-        break
+    # Match hwGen, disambiguating same-hwGen variants (e.g. telluride/t50)
+    # by the header's total rows/cols.
+    detected = resolve_variant(hw_gen, total_rows, total_cols)
 
     print("[INFO] Core dump header:")
     print(f"  Magic: {magic.decode('ascii', errors='ignore').rstrip(chr(0))}")

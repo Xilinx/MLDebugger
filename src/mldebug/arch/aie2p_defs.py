@@ -7,6 +7,8 @@ AIE2/AIE2P Specific Defs
 
 import json
 
+from .device_configs import AIE_DEV_PHX, DEVICE_CONFIGS
+
 AIE_TILE_T = "aie_tile"
 SHIM_TILE_T = "shim_tile"
 MEM_TILE_T = "mem_tile"
@@ -126,11 +128,19 @@ Core_registers = {
 }
 
 
-def init(is_aie2):
+def init(device=None):
   """
-  Inititalize aie2/2p specific
+  Initialize aie2/2p specific state from the central registry.
+
+  `device` is the resolved sub-device name (e.g. 'phx' or 'stx'). It selects
+  AIE_TILE_ROW_OFFSET/MEM_TILE_SZ; AIE2 (phx) also relocates CORE_PC.
   """
-  if is_aie2:
+  global AIE_TILE_ROW_OFFSET, MEM_TILE_SZ
+  cfg = DEVICE_CONFIGS.get(device)
+  if cfg:
+    AIE_TILE_ROW_OFFSET = cfg["core_row_start"]
+    MEM_TILE_SZ = cfg["mem_tile_sz"]
+  if device == AIE_DEV_PHX:
     Core_registers["CORE_PC"] = 0x31100
 
 
