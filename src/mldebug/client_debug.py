@@ -79,6 +79,7 @@ class ClientDebug:
         ctx_id=ctx_id,
         pid=pid,
         device=args.device,
+        sub_device=getattr(args, "sub_device", None) or args.device,
         design_info=self.design_info,
         args=args,
         core_dump_file=getattr(args, "core_dump", None),

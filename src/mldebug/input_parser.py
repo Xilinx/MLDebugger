@@ -15,7 +15,14 @@ import os
 import subprocess
 import re
 
-from mldebug.arch import load_aie_arch, AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL
+from mldebug.arch import (
+  load_aie_arch,
+  resolve_variant,
+  get_base_device,
+  AIE_DEV_PHX,
+  AIE_DEV_STX,
+  AIE_DEV_TEL,
+)
 from mldebug.backend.core_dump_impl import CoreDumpFallbackReader
 from mldebug.backend.factory import BackendConfig, create_backend
 from mldebug.utils import LOGGER, cleanup_and_exit, input_with_timeout, is_aarch64, is_windows
@@ -102,9 +109,13 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     args.interactive = True
 
   # AIE interface for aie2p and aie2 are shared
-  # We need to differentiate between them for a few items
-  args.aie_iface = load_aie_arch(args.device)
-  args.aie_iface.init(args.device == AIE_DEV_PHX)
+  # We need to differentiate between them for a few items.
+  # sub_device carries any same-hwGen variant (e.g. t20); it drives the arch
+  # module and geometry, while args.device stays the base device for backends.
+  sub_device = getattr(args, "sub_device", None) or args.device
+  args.sub_device = sub_device
+  args.aie_iface = load_aie_arch(sub_device)
+  args.aie_iface.init(sub_device)
 
   # Finally Create run flags
   if isinstance(args.run_flags, RunFlags):
@@ -222,9 +233,58 @@ def check_registry_keys(args, npu3=False) -> None:
     LOGGER.log("\nRegistry settings check passed. No modifications were necessary.")
 
 
+def _detect_vaiml_variant(aie_dir):
+  """
+  Detect the device/variant for a VAIML design.
+
+  Primary source is aie_trace_config.json's driver_config (hw_gen plus full
+  device geometry), which lets us distinguish same-hwGen variants (e.g.
+  telluride vs t20). Falls back to the HW_GEN define in aie_control.cpp when
+  the trace config is missing. Both files live in <work>/ps/c_rts/.
+
+  Returns a device/variant name, or None when nothing could be detected
+  (caller keeps the platform default).
+  """
+  c_rts = f"{aie_dir}/ps/c_rts"
+
+  # Primary: aie_trace_config.json driver_config
+  trace_cfg = f"{c_rts}/aie_trace_config.json"
+  try:
+    with open(trace_cfg, encoding="utf-8") as f:
+      driver = json.load(f)["aie_metadata"]["driver_config"]
+    variant = resolve_variant(
+      int(driver["hw_gen"]), int(driver["num_rows"]), int(driver["num_columns"])
+    )
+    if variant:
+      return variant
+  except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
+    pass
+
+  # Fallback: HW_GEN define in aie_control.cpp
+  ctrl_cpp = f"{c_rts}/aie_control.cpp"
+  try:
+    with open(ctrl_cpp, encoding="utf-8") as f:
+      for line in f.read().split("\n"):
+        if "#define HW_GEN" in line:
+          genstr = line.split(" ")[-1]
+          if genstr == "XAIE_DEV_GEN_AIE2PS":
+            return AIE_DEV_TEL
+          if genstr == "XAIE_DEV_GEN_AIE2":
+            return AIE_DEV_PHX
+          break
+  except (FileNotFoundError, KeyError):
+    pass
+  return None
+
+
 def set_device(args) -> None:
   """
-  Detects and sets the device target (phx, stx, or tel) for the current work directory.
+  Detects and sets the device target for the current work directory.
+
+  Sets two fields: ``args.device`` (base device understood by the backends,
+  binding, and xrt-smi) and ``args.sub_device`` (the resolved variant, e.g.
+  't20', used to select the arch module and geometry). For most devices these
+  are identical.
 
   Args:
       args: Argument object that is updated to set the detected device.
@@ -233,36 +293,31 @@ def set_device(args) -> None:
       None
   """
   endmsg = "\n"
-  if not args.device:
+  if args.device:
+    # User-specified device; honor it as the variant and derive the base.
+    args.sub_device = args.device
+    args.device = get_base_device(args.device)
+  else:
     endmsg = " Use -d to specify a diferent device.\n"
+    variant = None
+
     # For core dumps, the device is baked into the file header. Detect it now
     # so the overlay (built before the backend) uses the correct aie_iface.
     if getattr(args, "core_dump", None) and not getattr(args, "no_header", False):
-      cd_dev = CoreDumpFallbackReader.peek_device(args.core_dump)
-      if cd_dev:
-        args.device = cd_dev
-        print(f"[INFO] Using AIE Device: {args.device} (detected from core dump header).")
-        return
+      variant = CoreDumpFallbackReader.peek_device(args.core_dump)
 
-    # if on ARM, default is telluride else STX
-    args.device = AIE_DEV_TEL if is_aarch64() else AIE_DEV_STX
-    genstr = "XAIE_DEV_GEN_AIE2P"
+    if variant is None:
+      variant = _detect_vaiml_variant(args.aie_dir)
 
-    ctrl_cpp = args.aie_dir + "/ps/c_rts/aie_control.cpp"
-    try:
-      with open(ctrl_cpp, encoding="utf-8") as f:
-        data = f.read().split("\n")
-        for line in data:
-          if "#define HW_GEN" in line:
-            genstr = line.split(" ")[-1]
-            break
-        if genstr == "XAIE_DEV_GEN_AIE2PS":
-          args.device = AIE_DEV_TEL
-        if genstr == "XAIE_DEV_GEN_AIE2":
-          args.device = AIE_DEV_PHX
-    except (FileNotFoundError, KeyError):
-      pass
-      # LOGGER.log("[INFO] Unable to detect device automatically.")
+    if variant is None:
+      # if on ARM, default is telluride else STX
+      variant = AIE_DEV_TEL if is_aarch64() else AIE_DEV_STX
+
+    args.sub_device = variant
+    args.device = get_base_device(variant)
+
+  if args.sub_device != args.device:
+    print(f"[INFO] Detected sub-device: {args.sub_device} (base {args.device}).")
   print(f"[INFO] Using AIE Device: {args.device}.", end=endmsg)
 
 

@@ -14,7 +14,14 @@ from ast import literal_eval
 import os
 import time
 
-from mldebug.arch import AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3
+from mldebug.arch import (
+  AIE_DEV_NPU3,
+  AIE_DEV_PHX,
+  AIE_DEV_STX,
+  AIE_DEV_T10,
+  AIE_DEV_T20,
+  AIE_DEV_TEL,
+)
 from mldebug.client_debug import ClientDebug
 from mldebug.input_parser import (
   check_hw_context,
@@ -244,7 +251,7 @@ def app():
     "-d",
     "--device",
     help="Specify device if it can't be detected from aie_dir.",
-    choices=[AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3],
+    choices=[AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3, AIE_DEV_T20, AIE_DEV_T10],
     required=False,
   )
   # Hidden Argument
