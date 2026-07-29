@@ -19,7 +19,7 @@ from mldebug.arch import (
   AIE_DEV_PHX,
   AIE_DEV_STX,
   AIE_DEV_T10,
-  AIE_DEV_T50,
+  AIE_DEV_T20,
   AIE_DEV_TEL,
 )
 from mldebug.client_debug import ClientDebug
@@ -251,7 +251,7 @@ def app():
     "-d",
     "--device",
     help="Specify device if it can't be detected from aie_dir.",
-    choices=[AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3, AIE_DEV_T50, AIE_DEV_T10],
+    choices=[AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3, AIE_DEV_T20, AIE_DEV_T10],
     required=False,
   )
   # Hidden Argument

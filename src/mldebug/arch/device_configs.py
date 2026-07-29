@@ -8,13 +8,13 @@ and per-variant AIE geometry.
 Keyed by device/variant name. Fields:
   arch      -- which defs module the loader should import (aie2p/aie2ps)
   base      -- base device name understood by the C++ binding and xrt-smi;
-               variants (e.g. t50) map back to their base (telluride)
+               variants (e.g. t20) map back to their base (telluride)
   hwGen     -- hardware generation (matches the core-dump header hwGen)
   core_row_start -- first core-tile row; also the AIE tile row offset
   numrows/numcols -- full-device geometry, used to disambiguate variants
                      that share a hwGen
 
-Variants may share a hwGen (telluride/t50) and are disambiguated by
+Variants may share a hwGen (telluride/t20) and are disambiguated by
 (numrows, numcols).
 """
 
@@ -26,7 +26,7 @@ AIE_DEV_PHX = "phx"
 AIE_DEV_STX = "stx"
 AIE_DEV_TEL = "telluride"
 AIE_DEV_NPU3 = "npu3"
-AIE_DEV_T50 = "t50"
+AIE_DEV_T20 = "t20"
 AIE_DEV_T10 = "t10"
 
 # Arch (defs-module) names, resolved to modules by the loader.
@@ -80,7 +80,7 @@ DEVICE_CONFIGS = {
     "mem_tile_sz": 0x80000,
   },
   # aie2ps-based variants sharing telluride's hwGen; disambiguated by geometry.
-  AIE_DEV_T50: {
+  AIE_DEV_T20: {
     "arch": ARCH_AIE2PS,
     "base": AIE_DEV_TEL,
     "hwGen": 5,

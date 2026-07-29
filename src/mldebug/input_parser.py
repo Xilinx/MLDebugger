@@ -110,7 +110,7 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
 
   # AIE interface for aie2p and aie2 are shared
   # We need to differentiate between them for a few items.
-  # sub_device carries any same-hwGen variant (e.g. t50); it drives the arch
+  # sub_device carries any same-hwGen variant (e.g. t20); it drives the arch
   # module and geometry, while args.device stays the base device for backends.
   sub_device = getattr(args, "sub_device", None) or args.device
   args.sub_device = sub_device
@@ -239,7 +239,7 @@ def _detect_vaiml_variant(aie_dir):
 
   Primary source is aie_trace_config.json's driver_config (hw_gen plus full
   device geometry), which lets us distinguish same-hwGen variants (e.g.
-  telluride vs t50). Falls back to the HW_GEN define in aie_control.cpp when
+  telluride vs t20). Falls back to the HW_GEN define in aie_control.cpp when
   the trace config is missing. Both files live in <work>/ps/c_rts/.
 
   Returns a device/variant name, or None when nothing could be detected
@@ -283,7 +283,7 @@ def set_device(args) -> None:
 
   Sets two fields: ``args.device`` (base device understood by the backends,
   binding, and xrt-smi) and ``args.sub_device`` (the resolved variant, e.g.
-  't50', used to select the arch module and geometry). For most devices these
+  't20', used to select the arch module and geometry). For most devices these
   are identical.
 
   Args:

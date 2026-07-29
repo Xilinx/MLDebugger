@@ -117,7 +117,7 @@ class CoreDumpFallbackReader:
       "<BBBBBB", header[8:14]
     )
 
-    # Match hwGen, disambiguating same-hwGen variants (e.g. telluride/t50)
+    # Match hwGen, disambiguating same-hwGen variants (e.g. telluride/t20)
     # by the header's total rows/cols.
     detected = resolve_variant(hw_gen, total_rows, total_cols)
 

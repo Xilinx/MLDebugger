@@ -134,7 +134,7 @@ def init(device=None):
   """
   Apply device/variant geometry from the central registry.
 
-  `device` is the resolved sub-device name (e.g. 'telluride' or 't50');
+  `device` is the resolved sub-device name (e.g. 'telluride' or 't20');
   it selects AIE_TILE_ROW_OFFSET (= core_row_start) and MEM_TILE_SZ so
   same-hwGen variants can differ in geometry.
   """
