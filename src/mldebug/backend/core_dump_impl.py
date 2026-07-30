@@ -15,7 +15,6 @@ from .backend_interface import BackendInterface
 
 try:
   from .xrt_backend import MlDebug
-
   HAS_XRT_BACKEND = True
 except ImportError:
   HAS_XRT_BACKEND = False

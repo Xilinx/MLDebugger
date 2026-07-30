@@ -242,9 +242,6 @@ def app():
     help="Write AIE status to a file and exit.\n",
     default=None,
   )
-  p.add_argument(
-    "--no_header", action="store_true", help="Assume raw core dump without header. Use with -c."
-  )
   # Hidden Argument
   # 'AIE Device type'
   p.add_argument(
@@ -311,8 +308,9 @@ def app():
     dest="load_script",
     default=None,
     metavar="<filename>",
-    help="Execute a Python script in the advanced shell namespace.\n"
-    "Exits after the script unless -i or -s is also specified.\n",
+    help=_dev_cli_help(
+      "Execute a Python script in the advanced shell namespace.\n"
+    ),
   )
   p.add_argument(
     "-e",
@@ -366,7 +364,7 @@ def app():
       "mock_hang",
       "l2_ifm_dump",
       "text_dump",
-      "l1_ofm_dump",
+      #"l1_ofm_dump",
       "skip_iter",
       "dump_temps",
       "multistamp",
@@ -378,7 +376,7 @@ def app():
     # "layer_status    : Dump AIE status at start of each layer\n"
     # "l2_dump_only    : Dump only L2 buffers\n"
     "l2_ifm_dump     : Dump only L2 IFM buffers\n"
-    "l1_ofm_dump     : Dump L1 ofm buffers in addition to others\n"
+    #"l1_ofm_dump     : Dump L1 ofm buffers in addition to others\n"
     "text_dump       : Dump in text format\n"
     "skip_iter       : Skip iterations in batch mode when possible\n"
     "skip_iter2      : skip_iter using lcp lock.(Telluride only)\n"

@@ -293,18 +293,28 @@ def set_device(args) -> None:
       None
   """
   endmsg = "\n"
+
+  # Core-dump device comes from the file header. Peek to detect it and to see
+  # if the file even has a header; a headerless dump needs an explicit -d.
+  header_variant = None
+  if getattr(args, "core_dump", None):
+    header_variant = CoreDumpFallbackReader.peek_device(args.core_dump)
+    args.no_header = header_variant is None
+    if args.no_header and not args.device:
+      print(
+        "[ERROR] Core dump file has no readable header. Re-run with -d/--device "
+        "to specify the device (e.g. -d telluride) so the raw dump can be parsed."
+      )
+      cleanup_and_exit(args)
+
   if args.device:
     # User-specified device; honor it as the variant and derive the base.
     args.sub_device = args.device
     args.device = get_base_device(args.device)
   else:
     endmsg = " Use -d to specify a diferent device.\n"
-    variant = None
-
-    # For core dumps, the device is baked into the file header. Detect it now
-    # so the overlay (built before the backend) uses the correct aie_iface.
-    if getattr(args, "core_dump", None) and not getattr(args, "no_header", False):
-      variant = CoreDumpFallbackReader.peek_device(args.core_dump)
+    # Prefer the header-detected device.
+    variant = header_variant
 
     if variant is None:
       variant = _detect_vaiml_variant(args.aie_dir)
