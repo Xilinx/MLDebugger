@@ -155,7 +155,6 @@ options:
                         Use -d flag to specify device.
   --dump-aie-status <output_file_name>
                         Write AIE status to a file and exit.
-  --no_header           Assume raw core dump without header. Use with -c.
   -d DEV, --device DEV  AIE device [phx,stx,telluride]. Default: telluride
   -o <cxr>, --overlay <cxr>
                         Overlay used by design. Default: 4x4
