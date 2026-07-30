@@ -16,6 +16,25 @@ from mldebug.extra.calltree import AIECallTree
 from mldebug.utils import LOGGER, is_aarch64, is_windows
 
 
+def run_bundled(cmd, **kwargs):
+  """
+  Run a bundled executable (cmd[0]) so that shared libraries shipped next to
+  it are resolvable at runtime. Linux and Windows only.
+
+  Any extra kwargs are forwarded to subprocess.check_output.
+  """
+  exe_dir = str(Path(cmd[0]).resolve().parent)
+  env = dict(kwargs.pop("env", os.environ))
+  if is_windows():
+    # Prepend the exe's dir to PATH so co-located DLLs are found.
+    env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+    with os.add_dll_directory(exe_dir):
+      return subprocess.check_output(cmd, env=env, **kwargs)
+  # Linux: point the loader at co-located .so files.
+  env["LD_LIBRARY_PATH"] = exe_dir + os.pathsep + env.get("LD_LIBRARY_PATH", "")
+  return subprocess.check_output(cmd, env=env, **kwargs)
+
+
 @dataclass
 class AIEFunction:
   """
@@ -214,7 +233,7 @@ class WorkDir:
     elif is_aarch64():
       exe = "llvm-objdump.aarch64"
     with resources.as_file(resources.files("mldebug") / "bin" / exe) as objdump_path:
-      lst = subprocess.check_output(
+      lst = run_bundled(
         [
           str(objdump_path),
           "-d",
