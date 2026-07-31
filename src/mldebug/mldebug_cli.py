@@ -79,7 +79,7 @@ def check_args(args):
     args.interactive = False
     args.aie_only = True
     print("[INFO] Dumping advanced AIE status and exiting (non-interactive)")
-  elif args.exec_cmd is not None:
+  elif args.exec_cmd:
     args.aie_only = True
     args.interactive = False
   elif args.aie_only:
@@ -94,12 +94,16 @@ def check_args(args):
     if not args.dump_aie_status:
       args.interactive = True
     print("[INFO] Using standalone mode for core dumps")
+
   if args.backend == "core_dump" and args.core_dump is None:
     print(
       "[ERROR] Core dump file is required when backend is 'core_dump'. Please use -h or --help for usage"
     )
+
+  # Default overlay for this device
   if args.device == AIE_DEV_NPU3 and not args.overlay:
     args.overlay = "3x4"
+
   return True
 
 
