@@ -191,7 +191,7 @@ class XRTImpl(BackendInterface):
     Returns:
       None
     """
-    print(f"Currently configured PC Breakpoints: {self.pc_brkpts}")
+    print(f"{self.pc_brkpts}")
 
   def enable_pc_halt(self):
     """

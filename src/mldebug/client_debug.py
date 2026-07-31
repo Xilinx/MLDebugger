@@ -355,9 +355,11 @@ class ClientDebug:
   def print_core_summary(self):
     """Print the core summary for all stamps."""
     self.status_handle.print_core_summary()
+    print("===== Configured PC Breakpoints =====")
     for sid, impl in enumerate(self.impls):
-      print(f"\n=== Stamp {sid} PC Breakpoints ===")
+      print(f"[Stamp_{sid}]: ", end="")
       impl.print_pc_breakpoints()
+    print()
     self.print_current_state()
     print("[INFO] Currently only leftmost stamp is supported for advanced debug.")
 

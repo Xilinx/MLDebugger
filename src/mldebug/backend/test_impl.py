@@ -316,7 +316,7 @@ class TestImpl(BackendInterface):
     Returns:
       None
     """
-    print(f"Currently configured PC Breakpoints: {self.pc_brkpts}")
+    print(f"{self.pc_brkpts}")
 
   def write_aie_regs(self, reg, value):
     """

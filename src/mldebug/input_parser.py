@@ -145,6 +145,10 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     get_flag("disable_tg"),
   )
 
+  # Support all stamps in standalone mode
+  if args.aie_only:
+    args.run_flags.multistamp=True
+
 
 def set_aie_scc(args, subgraph_path):
   """
