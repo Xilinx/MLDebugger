@@ -30,6 +30,7 @@ unsupported_superkernels = [
   "superkernel_eltunary",
   # Padding preamble; halting on it desyncs PC/iteration stepping on HW
   "buffer_pad_innermost",
+  "superkernel_conv_eltbinary",
 ]
 
 
