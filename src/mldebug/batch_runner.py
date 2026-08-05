@@ -385,8 +385,12 @@ class BatchRunner:
     if self.args.run_flags.skip_iter:
       self.state.error = not utl.skip_iterations(target_itr - cur_it, sid)
     elif self.args.run_flags.skip_iter2:
+      is_last_layer = self.state.get_next_layer_for_stamp(sid, idx=1) is None
       self.state.error = not utl.skip_iterations_to_lock_acq(
-        self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc, target_itr - cur_it, sid
+        self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc,
+        target_itr - cur_it,
+        sid,
+        is_last_layer,
       )
     else:
       while cur_it < target_itr:

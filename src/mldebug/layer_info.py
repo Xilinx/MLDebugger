@@ -28,6 +28,8 @@ unsupported_superkernels = [
   "mllib_graphs::mha_type1::mha_adf_wrapper",
   # Causes failure. TODO: investigate
   "superkernel_eltunary",
+  # Padding preamble; halting on it desyncs PC/iteration stepping on HW
+  "buffer_pad_innermost",
 ]
 
 

@@ -178,11 +178,17 @@ class AIEUtil:
     write(reg_map["DEBUG_CONTROL1"], pc_event << 16)
     return True
 
-  def skip_iterations_to_lock_acq(self, lock_acq_pc, count, sid):
+  def skip_iterations_to_lock_acq(self, lock_acq_pc, count, sid, is_last_layer=False):
     """
     Skip iterations without using counter
     """
     if self._is_test_mode() or count == 0:
+      return True
+
+    # The last layer finishes without acquiring a next-layer lock, so there is
+    # no lock-acquire PC to break on. Just let the core run out and return.
+    if is_last_layer:
+      self.impl.continue_aie()
       return True
 
     self.impl.set_pc_breakpoint(lock_acq_pc)
