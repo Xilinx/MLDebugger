@@ -50,6 +50,17 @@ class MladfReport:
     aiec_layer_keys = self.bi_to_m2.get(bilo, [])
     return [self.m2_layers[k] for k in aiec_layer_keys]
 
+  def get_exec_order_for_bilo(self, bilo):
+    """
+    True execution order (mladf `layer_id`) for a buffer_info layer_order.
+
+    buffer_info `layer_order` is the MLIR/DAG index; the backend reschedules
+    layers, and the mladf `layer_id` captures the real execution/PM-reload
+    order. Returns the smallest mapped `layer_id`, or None if unmapped.
+    """
+    ids = [lyr["layer_id"] for lyr in self.get_aiec_layers_by_bilo(bilo) if "layer_id" in lyr]
+    return min(ids) if ids else None
+
   def get_skname_for_bilo(self, bilo, sid=0):
     """
     return superkernel for buffer info layer

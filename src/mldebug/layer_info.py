@@ -880,6 +880,59 @@ class LayerInfo:
         info, size_shift, version, aie_iface, num_stamps, self.mladf_report, num_batches=num_batches
       )
       self.layers.append(layer)
+    self._reorder_layers_by_execution()
+
+  def _reorder_layers_by_execution(self):
+    """
+    Reorder layers into true execution order using the mladf report.
+
+    buffer_info `layer_order` is the MLIR/DAG index; the aiecompiler backend
+    reschedules layers (notably templated-graph layers) into a different
+    execution / PM-reload order. The mladf `layer_id` captures that real
+    order, so each layer is translated to its `layer_id` (via the existing
+    parent-graph map) and stable-sorted on that single scale. buffer_info
+    order is only the lookup key / tie-break -- the two numberings are never
+    compared numerically.
+
+    A TG layer with no mladf mapping is disabled (dropped later) with a
+    warning; a non-TG layer with no mapping is anchored to its previous
+    neighbour so it keeps its buffer_info position. Non-TG layers should
+    already be in execution order, so a disagreement is flagged.
+    """
+    if not self.mladf_report:
+      return
+
+    keys = []
+    last_seen = -1
+    prev_exec = None
+    disagreement = False
+    for layer in self.layers:
+      exec_order = self.mladf_report.get_exec_order_for_bilo(layer.layer_order)
+      if exec_order is None:
+        if layer.lcp.is_tg and not layer.is_unsupported:
+          LOGGER.log(
+            f"[WARNING] No mladf execution order for TG layer {layer.layer_order}; "
+            "disabling it (its kernel dumps are skipped)."
+          )
+          layer.is_unsupported = True
+        # Anchor an unmapped layer to the previous execution slot (mladf scale).
+        exec_order = last_seen
+      else:
+        last_seen = exec_order
+        if not layer.lcp.is_tg:
+          if prev_exec is not None and exec_order < prev_exec:
+            disagreement = True
+          prev_exec = exec_order
+      keys.append(exec_order)
+
+    if disagreement:
+      LOGGER.log(
+        "[WARNING] buffer_info layer_order disagrees with mladf execution order "
+        "for non-TG layers; layer sequencing may be unreliable."
+      )
+
+    order = sorted(range(len(self.layers)), key=lambda i: (keys[i], i))
+    self.layers = [self.layers[i] for i in order]
 
   def _initialize_layers_from_workdir_x2(self, args):
     """
