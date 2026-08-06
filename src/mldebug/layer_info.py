@@ -930,8 +930,8 @@ class LayerInfo:
 
     if disagreement:
       LOGGER.log(
-        "[WARNING] buffer_info layer_order disagrees with mladf execution order "
-        "for non-TG layers; layer sequencing may be unreliable."
+        "[WARNING] buffer_info layer_order disagrees with mladf execution order; "
+        "layer sequencing may be unreliable."
       )
 
     order = sorted(range(len(self.layers)), key=lambda i: (keys[i], i))
@@ -1028,6 +1028,11 @@ class LayerInfo:
             ),
             None,
           )
+          # Fall back to the mladf report's authoritative per-core ELF.
+          if elf_id is None and self.mladf_report:
+            mladf_elf = self.mladf_report.get_elfid_for_bilo(layer.layer_order, sid)
+            if mladf_elf not in (None, -1) and str(mladf_elf) in funcs_by_elf:
+              elf_id = str(mladf_elf)
         else:
           elf_id = next((e for e, fns in funcs_by_elf.items() if key in fns), None)
 
