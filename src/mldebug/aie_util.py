@@ -5,9 +5,7 @@
 Manages high level interaction with AIE
 """
 
-import time
-
-from mldebug.utils import LOGGER
+from mldebug.utils import LOGGER, wait_until
 
 
 class AIEUtil:
@@ -159,20 +157,21 @@ class AIEUtil:
     write(reg_map["DEBUG_CONTROL1"], perf_cntr_event << 16)
     self.impl.continue_aie()
     # Step3: Poll all tiles until every PERF_CNTR_1 reaches the specified count.
-    timeout = 10
-    start_time = time.time()
     perf_cntr_1 = reg_map["PERF_CNTR_1"]
-    while True:
-      time.sleep(0.1)
-      values = self.read_aie_regs(perf_cntr_1)
-      if all(v == count for v in values.values()):
-        break
-      if time.time() - start_time > timeout:
-        LOGGER.log(
-          f"{sid}: Timeout waiting for skip {count} iterations across tiles! "
-          f"Design might be hung. Values={values}"
-        )
-        return False
+    last = {}
+
+    def reached():
+      last["values"] = self.read_aie_regs(perf_cntr_1)
+      return all(v == count for v in last["values"].values())
+
+    def on_timeout():
+      LOGGER.log(
+        f"{sid}: Timeout waiting for skip {count} iterations across tiles! "
+        f"Design might be hung. Values={last['values']}"
+      )
+
+    if not wait_until(reached, on_timeout=on_timeout):
+      return False
 
     # Step6: Reset debug control to stop at program counter event
     pc_event = self._get_eventid("PC_0_CORE")
@@ -188,21 +187,15 @@ class AIEUtil:
 
     self.impl.set_pc_breakpoint(lock_acq_pc)
     self.impl.continue_aie()
-    timeout = 10
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-      time.sleep(0.1)
-      if self.impl.poll_core_status():
-        break
+    wait_until(self.impl.poll_core_status)
 
     pcs = self.impl.read_core_pc(True)
-    is_valid =  self.pcs_match_target(pcs, lock_acq_pc)
+    is_valid = self.pcs_match_target(pcs, lock_acq_pc)
     if not is_valid:
       LOGGER.log(
-          f"{sid}: Invalid result in skip_iterations_to_lock_acq. "
-          f"target_pc={lock_acq_pc} pcs={pcs} "
-        )
-    #else:
+        f"{sid}: Invalid result in skip_iterations_to_lock_acq. target_pc={lock_acq_pc} pcs={pcs} "
+      )
+    # else:
     #  LOGGER.log(
     #      f"{sid}: Successfully skipped to lock acq pc. "
     #      f"target_pc={lock_acq_pc} pcs={pcs} "
@@ -283,12 +276,16 @@ class AIEUtil:
       for c, r in self._filter_tiles(self.aie_iface.MEM_TILE_T)
     }
 
-  def initialize_stamp(self):
+  def initialize_stamp(self, tiles=None):
     """
-    Initialize and clear DEBUG_CONTROL1 and DEBUG_CONTROL0 registers for all AIE tiles
-    belonging to the overlay instance (usually at the start of execution for multi-stamp).
+    Clear DEBUG_CONTROL1 unhalt specified tiles.
+
+    Args:
+      tiles (list[tuple], optional): (col, row) tiles to clear. Default: this stamp's tiles.
     """
-    for c, r in self._filter_tiles(self.aie_iface.AIE_TILE_T):
+    if tiles is None:
+      tiles = self.tiles
+    for c, r in self.aie_iface.filter_tiles(self.aie_iface.AIE_TILE_T, tiles):
       self.impl.write_register(c, r, self.aie_iface.Core_registers["DEBUG_CONTROL1"], 0)
       self.impl.write_register(c, r, self.aie_iface.Core_registers["DEBUG_CONTROL0"], 0)
 
@@ -309,7 +306,9 @@ class AIEUtil:
     true_core_event = self._get_eventid("TRUE_CORE")
 
     # eventC==eventD means generate combo3 and reset state machine
-    combo_event_inputs = rising_edge_event + (true_core_event << 8) + (pc_event << 16) + (pc_event << 24)
+    combo_event_inputs = (
+      rising_edge_event + (true_core_event << 8) + (pc_event << 16) + (pc_event << 24)
+    )
     self.impl.write_aie_regs(reg_map["DEBUG_CONTROL1"], combo_3_event << 16)
     self.impl.write_aie_regs(reg_map["COMBO_EVENT_INPUTS_A_D"], combo_event_inputs)
 
@@ -361,7 +360,7 @@ class AIEUtil:
           self._error_found = True
 
     # Check secondary error event register if it exists (NPU3 only)
-    if hasattr(aif, 'ERRORS_EVENT_REG2'):
+    if hasattr(aif, "ERRORS_EVENT_REG2"):
       for c, r in self._filter_tiles(aif.AIE_TILE_T):
         data = self.impl.read_register(c, r, aif.Core_registers[aif.ERRORS_EVENT_REG2])
         parsed = aif.parse_register(aif.ERRORS_EVENT_REG2, data)
@@ -394,7 +393,6 @@ class AIEUtil:
         f" Current State: Start of Layer_{layer}, It_{itr}\nERROR_EVENTS->CORES SUMMARY:\n{summary_str}\n"
       )
       print()
-
 
   def write_aie_regs(self, offset, val):
     """
@@ -446,7 +444,7 @@ class AIEUtil:
     Single step an aie core
     """
     offset = self.aie_iface.Core_registers["DEBUG_CONTROL0"]
-    self.impl.write_register(c, r, offset, (1<<2))
+    self.impl.write_register(c, r, offset, (1 << 2))
 
   def disable_ecc_event(self):
     """
@@ -476,17 +474,17 @@ class AIEUtil:
       for tile, val in pc_dict.items():
         if target_pc == val:
           continue
-        #print(f"Try to reconcile tile {tile} {val}")
+        # print(f"Try to reconcile tile {tile} {val}")
         col, row = tile
         for _ in range(num_pipeline_stages):
           self.single_step_core(col, row)
           newpc = self.read_core_pc_tile(col, row)
           delta = newpc - target_pc
-          if target_pc == newpc or max_pc_tolerance > delta > 0 :
+          if target_pc == newpc or max_pc_tolerance > delta > 0:
             break
         # if core pc is slightly ahead, we should be okay
         # but if not, execution can run into trouble later
         if target_pc > self.read_core_pc_tile(col, row):
           return False
-        #print("Successfully reconciled")
+        # print("Successfully reconciled")
     return True

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (C) 2024-2025 Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (C) 2024-2026 Advanced Micro Devices, Inc. All rights reserved.
 
 """
 AIE2/AIE2P Specific Defs
@@ -7,10 +7,14 @@ AIE2/AIE2P Specific Defs
 
 import json
 
+from .device_configs import AIE_DEV_PHX, DEVICE_CONFIGS
+
 AIE_TILE_T = "aie_tile"
 SHIM_TILE_T = "shim_tile"
 MEM_TILE_T = "mem_tile"
 TILE_TYPES = [AIE_TILE_T, SHIM_TILE_T, MEM_TILE_T]
+
+ARCH_NAME = "aie2p"
 
 AIE_TILE_ROW_OFFSET = 2
 MEM_TILE_SZ = 0x80000
@@ -124,11 +128,19 @@ Core_registers = {
 }
 
 
-def init(is_aie2):
+def init(device=None):
   """
-  Inititalize aie2/2p specific
+  Initialize aie2/2p specific state from the central registry.
+
+  `device` is the resolved sub-device name (e.g. 'phx' or 'stx'). It selects
+  AIE_TILE_ROW_OFFSET/MEM_TILE_SZ; AIE2 (phx) also relocates CORE_PC.
   """
-  if is_aie2:
+  global AIE_TILE_ROW_OFFSET, MEM_TILE_SZ
+  cfg = DEVICE_CONFIGS.get(device)
+  if cfg:
+    AIE_TILE_ROW_OFFSET = cfg["core_row_start"]
+    MEM_TILE_SZ = cfg["mem_tile_sz"]
+  if device == AIE_DEV_PHX:
     Core_registers["CORE_PC"] = 0x31100
 
 
@@ -648,7 +660,7 @@ def parse_overlay():
       overlay[t] = tile["dma_connectivity"]
   except FileNotFoundError:
     # Return empty overlay if not supported
-    #print("Overlay info not found for this Device.")
+    # print("Overlay info not found for this Device.")
     return {}
 
   return overlay

@@ -15,13 +15,21 @@ import os
 import subprocess
 import re
 
-from mldebug.arch import load_aie_arch, AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL
+from mldebug.arch import (
+  load_aie_arch,
+  resolve_variant,
+  get_base_device,
+  AIE_DEV_PHX,
+  AIE_DEV_STX,
+  AIE_DEV_TEL,
+)
 from mldebug.backend.core_dump_impl import CoreDumpFallbackReader
 from mldebug.backend.factory import BackendConfig, create_backend
 from mldebug.utils import LOGGER, cleanup_and_exit, input_with_timeout, is_aarch64, is_windows
 
 # Seconds to wait at interactive prompts before giving up and exiting.
 HW_CONTEXT_INPUT_TIMEOUT_S = 60
+
 
 @dataclass
 class RunFlags:
@@ -74,7 +82,9 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
   # AIE Work dir, device, buffer info
   if subgraph_path and os.path.exists(args.vaiml_folder_path):
     args.aie_dir = subgraph_path + f"/{fsp}/aiecompiler/Work"
-    args.mladf_report = subgraph_path + f"/{fsp}/aiecompiler/Work/reports/mladf_compiler_report.json"
+    args.mladf_report = (
+      subgraph_path + f"/{fsp}/aiecompiler/Work/reports/mladf_compiler_report.json"
+    )
     args.buffer_info = subgraph_path + f"/{fsp}/buffer_info.json"
     args.flexmlrt_hsi = subgraph_path + f"/{fsp}/flexmlrt-hsi.json"
     args.debug_map_json = subgraph_path + f"/{fsp}/debug_map.json"
@@ -89,18 +99,23 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     args.subgraph_name = None
 
   set_device(args)
+  set_aie_scc(args, subgraph_path)
 
   # Metadata check
   no_metadata = args.buffer_info is None or not os.path.exists(args.buffer_info)
   if (no_metadata or not os.path.exists(args.aie_dir)) and not args.aie_only:
     print("[INFO] Using Standalone mode.")
-    args.aie_only=True
-    args.interactive=True
+    args.aie_only = True
+    args.interactive = True
 
   # AIE interface for aie2p and aie2 are shared
-  # We need to differentiate between them for a few items
-  args.aie_iface = load_aie_arch(args.device)
-  args.aie_iface.init(args.device == AIE_DEV_PHX)
+  # We need to differentiate between them for a few items.
+  # sub_device carries any same-hwGen variant (e.g. t20); it drives the arch
+  # module and geometry, while args.device stays the base device for backends.
+  sub_device = getattr(args, "sub_device", None) or args.device
+  args.sub_device = sub_device
+  args.aie_iface = load_aie_arch(sub_device)
+  args.aie_iface.init(sub_device)
 
   # Finally Create run flags
   if isinstance(args.run_flags, RunFlags):
@@ -127,8 +142,31 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     get_flag("mock_hang"),
     get_flag("dump_temps"),
     get_flag("multistamp"),
-    get_flag("disable_tg")
+    get_flag("disable_tg"),
   )
+
+  # Support all stamps in standalone mode
+  if args.aie_only:
+    args.run_flags.multistamp=True
+
+
+def set_aie_scc(args, subgraph_path):
+  """
+  Set AIE Single Core compiler
+  """
+  if args.peano:
+    return
+
+  compile_flags_path = subgraph_path + "/compile_flags.json"
+  if os.path.exists(compile_flags_path):
+    try:
+      with open(compile_flags_path, 'r', encoding='utf8') as f:
+        compile_flags = json.load(f)
+        if compile_flags.get("aie_single_core_compiler") == "peano":
+          args.peano = True
+          LOGGER.log("[INFO] Detected peano compiler.")
+    except (json.JSONDecodeError, IOError) as e:
+      LOGGER.log(f"[WARNING] Failed to parse compile_flags.json: {e}")
 
 
 def check_registry_keys(args, npu3=False) -> None:
@@ -199,9 +237,58 @@ def check_registry_keys(args, npu3=False) -> None:
     LOGGER.log("\nRegistry settings check passed. No modifications were necessary.")
 
 
+def _detect_vaiml_variant(aie_dir):
+  """
+  Detect the device/variant for a VAIML design.
+
+  Primary source is aie_trace_config.json's driver_config (hw_gen plus full
+  device geometry), which lets us distinguish same-hwGen variants (e.g.
+  telluride vs t20). Falls back to the HW_GEN define in aie_control.cpp when
+  the trace config is missing. Both files live in <work>/ps/c_rts/.
+
+  Returns a device/variant name, or None when nothing could be detected
+  (caller keeps the platform default).
+  """
+  c_rts = f"{aie_dir}/ps/c_rts"
+
+  # Primary: aie_trace_config.json driver_config
+  trace_cfg = f"{c_rts}/aie_trace_config.json"
+  try:
+    with open(trace_cfg, encoding="utf-8") as f:
+      driver = json.load(f)["aie_metadata"]["driver_config"]
+    variant = resolve_variant(
+      int(driver["hw_gen"]), int(driver["num_rows"]), int(driver["num_columns"])
+    )
+    if variant:
+      return variant
+  except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
+    pass
+
+  # Fallback: HW_GEN define in aie_control.cpp
+  ctrl_cpp = f"{c_rts}/aie_control.cpp"
+  try:
+    with open(ctrl_cpp, encoding="utf-8") as f:
+      for line in f.read().split("\n"):
+        if "#define HW_GEN" in line:
+          genstr = line.split(" ")[-1]
+          if genstr == "XAIE_DEV_GEN_AIE2PS":
+            return AIE_DEV_TEL
+          if genstr == "XAIE_DEV_GEN_AIE2":
+            return AIE_DEV_PHX
+          break
+  except (FileNotFoundError, KeyError):
+    pass
+  return None
+
+
 def set_device(args) -> None:
   """
-  Detects and sets the device target (phx, stx, or tel) for the current work directory.
+  Detects and sets the device target for the current work directory.
+
+  Sets two fields: ``args.device`` (base device understood by the backends,
+  binding, and xrt-smi) and ``args.sub_device`` (the resolved variant, e.g.
+  't20', used to select the arch module and geometry). For most devices these
+  are identical.
 
   Args:
       args: Argument object that is updated to set the detected device.
@@ -210,36 +297,41 @@ def set_device(args) -> None:
       None
   """
   endmsg = "\n"
-  if not args.device:
+
+  # Core-dump device comes from the file header. Peek to detect it and to see
+  # if the file even has a header; a headerless dump needs an explicit -d.
+  header_variant = None
+  if getattr(args, "core_dump", None):
+    header_variant = CoreDumpFallbackReader.peek_device(args.core_dump)
+    args.no_header = header_variant is None
+    if args.no_header and not args.device:
+      print(
+        "[ERROR] Core dump file has no readable header. Re-run with -d/--device "
+        "to specify the device (e.g. -d telluride) so the raw dump can be parsed."
+      )
+      cleanup_and_exit(args)
+
+  if args.device:
+    # User-specified device; honor it as the variant and derive the base.
+    args.sub_device = args.device
+    args.device = get_base_device(args.device)
+  else:
     endmsg = " Use -d to specify a diferent device.\n"
-    # For core dumps, the device is baked into the file header. Detect it now
-    # so the overlay (built before the backend) uses the correct aie_iface.
-    if getattr(args, "core_dump", None) and not getattr(args, "no_header", False):
-      cd_dev = CoreDumpFallbackReader.peek_device(args.core_dump)
-      if cd_dev:
-        args.device = cd_dev
-        print(f"[INFO] Using AIE Device: {args.device} (detected from core dump header).")
-        return
+    # Prefer the header-detected device.
+    variant = header_variant
 
-    # if on ARM, default is telluride else STX
-    args.device = AIE_DEV_TEL if is_aarch64() else AIE_DEV_STX
-    genstr = "XAIE_DEV_GEN_AIE2P"
+    if variant is None:
+      variant = _detect_vaiml_variant(args.aie_dir)
 
-    ctrl_cpp = args.aie_dir + "/ps/c_rts/aie_control.cpp"
-    try:
-      with open(ctrl_cpp, encoding="utf-8") as f:
-        data = f.read().split("\n")
-        for line in data:
-          if "#define HW_GEN" in line:
-            genstr = line.split(" ")[-1]
-            break
-        if genstr == "XAIE_DEV_GEN_AIE2PS":
-          args.device = AIE_DEV_TEL
-        if genstr == "XAIE_DEV_GEN_AIE2":
-          args.device = AIE_DEV_PHX
-    except (FileNotFoundError, KeyError):
-      pass
-      #LOGGER.log("[INFO] Unable to detect device automatically.")
+    if variant is None:
+      # if on ARM, default is telluride else STX
+      variant = AIE_DEV_TEL if is_aarch64() else AIE_DEV_STX
+
+    args.sub_device = variant
+    args.device = get_base_device(variant)
+
+  if args.sub_device != args.device:
+    print(f"[INFO] Detected sub-device: {args.sub_device} (base {args.device}).")
   print(f"[INFO] Using AIE Device: {args.device}.", end=endmsg)
 
 
@@ -260,10 +352,14 @@ def print_hw_context_table(current_contexts: dict[str, dict[str, str]]) -> None:
   # LOGGER.log table data
   for context, context_data in current_contexts.items():
     columns_str = ", ".join(map(str, context_data["columns"]))
-    LOGGER.log(f"{context:<12} {columns_str:<30} {context_data['pid']:<12} {context_data['status']:<12}")
+    LOGGER.log(
+      f"{context:<12} {columns_str:<30} {context_data['pid']:<12} {context_data['status']:<12}"
+    )
 
 
-def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list[tuple[int, int]] | None:
+def _validate_contexts_with_read(
+  contexts: dict, device: str, aie_iface
+) -> list[tuple[int, int]] | None:
   """
   Validate ALL contexts by reading CORE_STATUS register (verifies register access)
 
@@ -285,7 +381,7 @@ def _validate_contexts_with_read(contexts: dict, device: str, aie_iface) -> list
   # Device-specific addresses: Telluride=0x38004, PHX/STX=0x32004
   test_reg = aie_iface.Core_registers["CORE_STATUS"]
   test_tiles = [(test_col, test_row)]
-  
+
   valid_contexts = []
   for ctx_id, ctx_info in contexts.items():
     backend = None
@@ -355,9 +451,11 @@ def check_hw_context(args) -> tuple[int, int]:
         }
 
     if not current_contexts:
-      print("Warning: xrt-smi could find no applications running. Please launch an application to use MLDebugger.")
+      print(
+        "Warning: xrt-smi could find no applications running. Please launch an application to use MLDebugger."
+      )
       raise FileNotFoundError
-    
+
     # Path 1: Single context found -> auto-select it
     if len(current_contexts) == 1:
       ctx = int(list(current_contexts.keys())[0])
@@ -365,7 +463,9 @@ def check_hw_context(args) -> tuple[int, int]:
       return ctx, pid
 
     # Path 2: Multiple contexts found -> validate all with register read test
-    print(f"[INFO] Found {len(current_contexts)} hardware context(s). Validating with register read test...")
+    print(
+      f"[INFO] Found {len(current_contexts)} hardware context(s). Validating with register read test..."
+    )
     valid_contexts = _validate_contexts_with_read(current_contexts, device, aie_iface)
 
     # Path 2a: No contexts passed validation -> prompt user for input
@@ -405,7 +505,9 @@ def check_hw_context(args) -> tuple[int, int]:
         ctx = int(selected_context_id)
         pid = int(valid_only[selected_context_id]["pid"])
       else:
-        LOGGER.log(f"Context ID {selected_context_id} not found. Valid options: {', '.join(valid_only.keys())}")
+        LOGGER.log(
+          f"Context ID {selected_context_id} not found. Valid options: {', '.join(valid_only.keys())}"
+        )
         cleanup_and_exit(args, 1)
       return ctx, pid
 
@@ -519,12 +621,15 @@ def get_subgraph(args) -> tuple[str, Subgraph]:
               "flag in vaiml_config in vitisai_config.json"
             )
           return model_folder_name, Subgraph(
-            folder_path=f"{vaiml_folder_path}/{model_folder_name}/{vaiml_subgraphs[0]}", name=vaiml_subgraphs[0]
+            folder_path=f"{vaiml_folder_path}/{model_folder_name}/{vaiml_subgraphs[0]}",
+            name=vaiml_subgraphs[0],
           )
         break
 
   if len(subgraphs) > 1:
-    raise RuntimeError("Error: Multi-partition design detected. Specify a partition in vitisai_config.json")
+    raise RuntimeError(
+      "Error: Multi-partition design detected. Specify a partition in vitisai_config.json"
+    )
   if len(subgraphs) == 0:
     raise RuntimeError("Error: No partition found in the input model folder")
   return model_folder_name, subgraphs[0]

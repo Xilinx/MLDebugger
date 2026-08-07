@@ -1,16 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
-# Copyright (C) 2024-2025 Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (C) 2024-2026 Advanced Micro Devices, Inc. All rights reserved.
 
 """
-AIE2/AIE2P Specific Defs
+AIE2PS Specific Defs
 """
 
 import json
+
+from .device_configs import DEVICE_CONFIGS
 
 AIE_TILE_T = "aie_tile"
 SHIM_TILE_T = "shim_tile"
 MEM_TILE_T = "mem_tile"
 TILE_TYPES = [AIE_TILE_T, SHIM_TILE_T, MEM_TILE_T]
+
+ARCH_NAME = "aie2ps"
 
 AIE_TILE_ROW_OFFSET = 3
 MEM_TILE_SZ = 0x80000
@@ -126,11 +130,19 @@ Core_registers = {
 }
 
 
-def init(_):
+def init(device=None):
   """
-  consistent interface with aie2p
+  Apply device/variant geometry from the central registry.
+
+  `device` is the resolved sub-device name (e.g. 'telluride' or 't20');
+  it selects AIE_TILE_ROW_OFFSET (= core_row_start) and MEM_TILE_SZ so
+  same-hwGen variants can differ in geometry.
   """
-  return
+  global AIE_TILE_ROW_OFFSET, MEM_TILE_SZ
+  cfg = DEVICE_CONFIGS.get(device)
+  if cfg:
+    AIE_TILE_ROW_OFFSET = cfg["core_row_start"]
+    MEM_TILE_SZ = cfg["mem_tile_sz"]
 
 
 _create_bds(AIE_TILE_T, Core_registers)
@@ -649,7 +661,7 @@ def parse_overlay():
       overlay[t] = tile["dma_connectivity"]
   except FileNotFoundError:
     # Return empty overlay if not supported
-    #print("Overlay info not found for this Device.")
+    # print("Overlay info not found for this Device.")
     return {}
 
   return overlay

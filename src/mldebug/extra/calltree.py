@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 @dataclass
 class AIEFunc:
   """Represents a function in the AIE assembly."""
+
   name: str
   start_pc: int
   end_pc: int = 0
@@ -45,6 +46,7 @@ class AIEFunc:
 @dataclass
 class CallNode:
   """Node in the call tree."""
+
   func_name: str
   pc: int  # PC where call was made
   children: list = field(default_factory=list)
@@ -82,7 +84,7 @@ class AIECallTree:
     Returns:
         AIECallTree instance
     """
-    with open(filepath, 'r', encoding='utf-8') as f:
+    with open(filepath, "r", encoding="utf-8") as f:
       content = f.read()
     return cls(content)
 
@@ -101,16 +103,16 @@ class AIECallTree:
 
   def _parse(self):
     """Parse the LST content and extract functions and call information."""
-    lines = self._raw_content.split('\n')
+    lines = self._raw_content.split("\n")
 
     # Pattern for function/label header: "00000000 <function_name>:"
-    func_pattern = re.compile(r'^([0-9a-f]+)\s+<([0-9a-zA-Z_\s]+)(.+)>:$')
+    func_pattern = re.compile(r"^([0-9a-f]+)\s+<([0-9a-zA-Z_\s]+)(.+)>:$")
     # Pattern for instruction with PC: "     hex:      instruction"
-    instr_pattern = re.compile(r'^\s*([0-9a-f]+):\s+(.+)$')
+    instr_pattern = re.compile(r"^\s*([0-9a-f]+):\s+(.+)$")
     # Pattern for jl (jump and link - function call): jl #0xXXXX
-    call_pattern = re.compile(r'\bjl\s+#(0x[0-9a-f]+)')
+    call_pattern = re.compile(r"\bjl\s+#(0x[0-9a-f]+)")
     # Pattern for j (unconditional jump - potential tail call): j #0xXXXX
-    jump_pattern = re.compile(r'\bj\s+#(0x[0-9a-f]+)')
+    jump_pattern = re.compile(r"\bj\s+#(0x[0-9a-f]+)")
 
     current_func = None
 
@@ -122,7 +124,7 @@ class AIECallTree:
         name = m_func.group(2)
 
         # Skip internal labels (start with '.')
-        if name.startswith('.'):
+        if name.startswith("."):
           continue
 
         # Save previous function if exists
@@ -150,13 +152,13 @@ class AIECallTree:
           current_func.calls.append((pc, target))
 
         # Check for ret (function end)
-        if '\tret' in instr or instr.strip().startswith('ret'):
+        if "\tret" in instr or instr.strip().startswith("ret"):
           if current_func.end_pc == 0:
             current_func.end_pc = pc
 
         # Check for unconditional jump (potential tail call)
         m_jump = jump_pattern.search(instr)
-        if m_jump and '\tjl' not in instr:
+        if m_jump and "\tjl" not in instr:
           target = int(m_jump.group(1), 16)
           current_func.tail_jump_target = target
 
@@ -229,7 +231,7 @@ class AIECallTree:
 
       if func.tail_jump_target and func.tail_jump_target in self._addr_to_name:
         target_name = self._addr_to_name[func.tail_jump_target]
-        if not target_name.startswith('.'):
+        if not target_name.startswith("."):
           child = build_tree(func.tail_jump_target, depth + 1)
           child.is_tail_call = True
           node.children.append(child)
@@ -273,12 +275,12 @@ class AIECallTree:
     else:
       # Default: start with __start or _main_init
       for addr, name in self._addr_to_name.items():
-        if name in ('__start', '_main_init'):
+        if name in ("__start", "_main_init"):
           root_addrs.append(addr)
 
       # Also find all superkernel functions
       for addr, name in self._addr_to_name.items():
-        if 'superkernel' in name.lower() and addr not in root_addrs:
+        if "superkernel" in name.lower() and addr not in root_addrs:
           root_addrs.append(addr)
 
     return sorted(root_addrs)
@@ -363,7 +365,7 @@ class AIECallTree:
           lines.append(f"  ├─ calls {target_name} at PC 0x{call_pc:x}")
         if func.tail_jump_target and func.tail_jump_target in self._addr_to_name:
           target_name = self._addr_to_name[func.tail_jump_target]
-          if not target_name.startswith('.'):
+          if not target_name.startswith("."):
             lines.append(f"  └─ tail-calls {target_name}")
 
     return "\n".join(lines)

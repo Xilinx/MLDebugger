@@ -7,18 +7,24 @@ Load appropriate module based on device
 
 import importlib
 
-AIE_DEV_PHX = "phx"
-AIE_DEV_STX = "stx"
-AIE_DEV_TEL = "telluride"
-AIE_DEV_NPU3 = "npu3"
+from .device_configs import AIE_DEV_NPU3, ARCH_AIE2P, ARCH_AIE2PS, DEVICE_CONFIGS
+
+# Maps a config's `arch` field to its defs module.
+_ARCH_MODULES = {
+  ARCH_AIE2P: ".aie2p_defs",
+  ARCH_AIE2PS: ".aie2ps_defs",
+}
+
 
 def load_aie_arch(device):
   """
-  return specific aie arch module based on name
+  return specific aie arch module based on device/variant name
   """
-  mod = ".aie2p_defs"
-  if device == AIE_DEV_TEL:
-    mod = ".aie2ps_defs"
-  elif device == AIE_DEV_NPU3:
-    mod = ".npu3_defs"
+  # npu3 is not yet in the geometry registry; keep it as a special case.
+  if device == AIE_DEV_NPU3:
+    return importlib.import_module(".npu3_defs", package="mldebug.arch")
+
+  cfg = DEVICE_CONFIGS.get(device)
+  arch = cfg["arch"] if cfg else ARCH_AIE2P
+  mod = _ARCH_MODULES.get(arch, ".aie2p_defs")
   return importlib.import_module(mod, package="mldebug.arch")

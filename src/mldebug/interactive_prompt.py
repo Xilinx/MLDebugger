@@ -32,6 +32,25 @@ class InteractivePrompt:
       handle: ClientDebug instance providing the full debugging API.
     """
     self.handle = handle
+    self._shell_namespace = None
+    self._shell_help_text = None
+
+  def _ensure_shell_namespace(self):
+    """Return the persistent advanced-shell namespace, creating it if needed."""
+    if self._shell_namespace is None:
+      self._shell_namespace, self._shell_help_text = self._build_shell_namespace()
+    return self._shell_namespace
+
+  def load_script(self, filename):
+    """
+    Execute a Python script file in the advanced shell namespace.
+
+    Scripts can use rreg, wreg, status, step_layer, and other shell bindings.
+    Definitions persist for later calls from the advanced shell or basic prompt.
+    """
+    namespace = self._ensure_shell_namespace()
+    with open(filename, encoding="utf-8") as f:
+      exec(compile(f.read(), filename, "exec"), namespace)  # pylint: disable=exec-used
 
   # ------------------------------------------------------------------ #
   # Advanced Python shell
@@ -74,6 +93,7 @@ AIE INSPECTION FUNCTIONS
   dump_l3(name, offset, size)            : Dump L3 spill buffer to file (Run VAIML with ENABLE_ML_DEBUG=2)
   control_instr()                        : Print instr in aie_runtime_control (--multi-layer-record-txn required)
   rlcp(col=None, row=None, ping=1)       : Read LCP from a core (Default: ping lcp on first core of stamp 0)
+  load_script(filename)                  : Execute a Python script file - can call any of the above functions
 
 STAMP LEVEL CONTROL FUNCTIONS (Default: Leftmost)
   swreg(offset, val, sid=0) : Write all registers
@@ -126,6 +146,7 @@ LAYER BASED AIE CONTROL FUNCTIONS (-b or -v or -x2 flags required)
     srreg = h.rreg_stamp
     calltree = h.design_info.work_dir.print_calltree
     dump_lst = h.design_info.work_dir.dump_lst_to_file
+    load_script = self.load_script
     # pylint: enable=possibly-unused-variable
 
     variables = globals().copy()
@@ -139,7 +160,8 @@ LAYER BASED AIE CONTROL FUNCTIONS (-b or -v or -x2 flags required)
     Exposes inspection, register, breakpoint, and execution control functions
     as local variables in a code.InteractiveConsole session.
     """
-    variables, help_text = self._build_shell_namespace()
+    variables = self._ensure_shell_namespace()
+    help_text = self._shell_help_text
 
     original_help = builtins.help
 
@@ -168,7 +190,7 @@ LAYER BASED AIE CONTROL FUNCTIONS (-b or -v or -x2 flags required)
       cmd (str): Python source to execute. May be an expression or one or
         more statements.
     """
-    variables, _ = self._build_shell_namespace()
+    variables = self._ensure_shell_namespace()
     try:
       code_obj = compile(cmd, "<exec_cmd>", "eval")
     except SyntaxError:
@@ -229,6 +251,7 @@ AIE CONTROL COMMANDS
                                      Example: g 1234
 MISC COMMANDS
   py                            :    Launch interactive python shell with advanced functionality
+  load_script/load <filename>   :    Execute a Python script file (advanced shell namespace)
   q/quit                        :    Quit the program
 """
     print(help_text)
@@ -293,6 +316,11 @@ MISC COMMANDS
           print("Unrecognized Parameters. Use h/help")
       elif c in ["py"]:
         self.run_advanced()
+      elif c in ["load_script", "load"]:
+        if nargs == 2:
+          self.load_script(cmd[1])
+        else:
+          print("Usage: load_script <filename>")
       elif c in ["q", "quit"]:
         return
       else:

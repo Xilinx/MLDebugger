@@ -119,13 +119,8 @@ class MemoryDumper:
       return
 
     overlay = self.design_info.overlay
-    # batch + stamp combination doesn't exist
-    if self.design_info.is_batched():
-      batch = str(sid)
-      suffix = "stamp0"
-    else:
-      batch = "0"
-      suffix = f"stamp{sid}"
+    batch = str(overlay.replica_to_batch(sid))
+    suffix = f"stamp{overlay.replica_to_stamp(sid)}"
 
     for buffer in buffers:
       if buffer.ofm:
@@ -161,9 +156,7 @@ class MemoryDumper:
     if self.args.run_flags.skip_dump or self.args.run_flags.l2_dump_only:
       return
 
-    batch = "0"
-    if self.design_info.is_batched():
-      batch = str(sid)
+    batch = str(self.design_info.overlay.replica_to_batch(sid))
 
     for buffer in buffers:
       if not buffer.l1:
@@ -211,7 +204,9 @@ class MemoryDumper:
     self.dump_l3_buffers(layer, x2=True)
     previous_layer = self.state.get_previous_layer()
     if previous_layer:
-      self.dump_memory_l2(previous_layer.out_buffers, it, previous_layer.layer_order, use_l2_names=True)
+      self.dump_memory_l2(
+        previous_layer.out_buffers, it, previous_layer.layer_order, use_l2_names=True
+      )
 
   def dump_l3_buffers(self, layer, x2=False):
     """
@@ -275,5 +270,7 @@ class MemoryDumper:
     self.dump_l3_buffers(self.state.get_current_layer(), x2=self.args.x2_folder_path is not None)
     if self.state.get_current_layer() and self.state.get_current_layer().l3_buffers:
       for buffer in self.state.get_current_layer().l3_buffers:
-        LOGGER.log(f"[INFO] L3 buffer '{buffer.name}' dumped successfully (offset={buffer.offset}, size={buffer.size})")
+        LOGGER.log(
+          f"[INFO] L3 buffer '{buffer.name}' dumped successfully (offset={buffer.offset}, size={buffer.size})"
+        )
       LOGGER.log(f"[INFO] Memory dump complete at : {self.get_output_path()}")

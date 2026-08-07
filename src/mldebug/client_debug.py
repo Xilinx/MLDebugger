@@ -52,7 +52,9 @@ class ClientDebug:
     # Create this first so that connection will be aborted in case of crash
     if self.args.automated_debug or self.args.l3:
       debug_server = DebugServer(
-        self.output_dir, self.args.backend == "test", subgraph_name=self.args.subgraph_name,
+        self.output_dir,
+        self.args.backend == "test",
+        subgraph_name=self.args.subgraph_name,
       )
       # Track the live server so cleanup_and_exit() at unplanned exit points
       # can send TERMINATE_CONNECTION to flexmlrt.
@@ -60,12 +62,16 @@ class ClientDebug:
 
     try:
       self.design_info = LayerInfo(args)
-      self.state = DebugState(self.design_info.layers, self.design_info.overlay.get_stampcount())
+      self.state = DebugState(
+        self.design_info.layers,
+        self.design_info.overlay.get_stampcount(),
+        stamps_per_batch=self.design_info.overlay.get_stamps_per_batch(),
+      )
     except Exception as err:
       if debug_server:
         print("[INFO] closing debug server.")
         debug_server.close()
-      raise(err)
+      raise (err)
 
     for i in self.design_info.overlay.get_stampids():
       config = BackendConfig(
@@ -73,22 +79,31 @@ class ClientDebug:
         ctx_id=ctx_id,
         pid=pid,
         device=args.device,
+        sub_device=getattr(args, "sub_device", None) or args.device,
         design_info=self.design_info,
         args=args,
-        core_dump_file=getattr(args, 'core_dump', None),
-        no_header=getattr(args, 'no_header', False),
+        core_dump_file=getattr(args, "core_dump", None),
+        no_header=getattr(args, "no_header", False),
       )
       impl = create_backend(args.backend, config)
       self.impls.append(impl)
       self.aie_utls.append(
         AIEUtil(
-          args.aie_iface, impl, self.design_info.overlay.get_tiles(stamp_id=i), self.design_info.work_dir.globals[i]
+          args.aie_iface,
+          impl,
+          self.design_info.overlay.get_tiles(stamp_id=i),
+          self.design_info.work_dir.stamp(i).globals,
         )
       )
 
+    self._quiesce_inactive_stamps()
+
     self.impl = self.impls[0]
     self.status_handle = AIEStatus(
-      self.impl, self.design_info.overlay.get_tiles, args.aie_iface, self.design_info.overlay.get_repr()
+      self.impl,
+      self.design_info.overlay.get_tiles,
+      args.aie_iface,
+      self.design_info.overlay.get_repr(),
     )
 
     # Initialize specialized components (share mutable lists by reference)
@@ -97,8 +112,7 @@ class ClientDebug:
       self.dumper.debug_server = debug_server
 
     self.runner = BatchRunner(
-      args, self.state, self.design_info, self.impls, self.aie_utls,
-      self.dumper, self.status_handle
+      args, self.state, self.design_info, self.impls, self.aie_utls, self.dumper, self.status_handle
     )
     self.interactive = InteractiveController(
       args, self.state, self.design_info, self.impls, self.aie_utls, self.runner
@@ -108,6 +122,17 @@ class ClientDebug:
       print("[ERROR] No layers with kernels found in the design. Exiting Now.")
       self.dumper.debug_server.close()
       sys.exit(0)
+
+  def _quiesce_inactive_stamps(self):
+    """
+    Clear debug-control registers on physical replicas excluded from the active
+    view so they run freely
+    """
+    inactive_tiles = self.design_info.overlay.get_inactive_tiles()
+    if not inactive_tiles:
+      return
+    self.aie_utls[0].initialize_stamp(inactive_tiles)
+    LOGGER.log("[INFO] Using single stamp control. Please use multistamp flag for more data.")
 
   # --- Batch mode delegation ---
 
@@ -291,10 +316,7 @@ class ClientDebug:
     For stamps with index > 1, initialize the stamp and continue execution.
     """
     self.impls[0].enable_pc_halt()
-    for sid, impl in enumerate(self.impls):
-      if sid > 0:
-        self.aie_utls[sid].initialize_stamp()
-        impl.continue_aie()
+    self._quiesce_inactive_stamps()
 
   def wreg_stamp(self, offset, val, sid=0):
     """
@@ -333,9 +355,11 @@ class ClientDebug:
   def print_core_summary(self):
     """Print the core summary for all stamps."""
     self.status_handle.print_core_summary()
+    print("===== Configured PC Breakpoints =====")
     for sid, impl in enumerate(self.impls):
-      print(f"\n=== Stamp {sid} PC Breakpoints ===")
+      print(f"[Stamp_{sid}]: ", end="")
       impl.print_pc_breakpoints()
+    print()
     self.print_current_state()
     print("[INFO] Currently only leftmost stamp is supported for advanced debug.")
 

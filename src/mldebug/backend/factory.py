@@ -22,15 +22,17 @@ class BackendConfig:
   Superset of parameters needed by all backend constructors.
 
   Each backend extracts only the fields it needs:
-    XRT:       tiles, ctx_id, pid, device
+    XRT:       tiles, ctx_id, pid, device (base device for the binding/xrt-smi)
     Test:      tiles, design_info, args
-    CoreDump:  tiles, ctx_id, pid, device, core_dump_file, no_header
+    CoreDump:  tiles, ctx_id, pid, sub_device (variant geometry),
+               core_dump_file, no_header
   """
 
   tiles: list = field(default_factory=list)
   ctx_id: int = 0
   pid: int = 0
   device: str = ""
+  sub_device: str = ""
   design_info: Any = None
   args: Any = None
   core_dump_file: str = None
@@ -55,7 +57,9 @@ def create_backend(backend_type, config):
     try:
       xrt_mod = importlib.import_module("mldebug.backend.xrt_impl")
     except ModuleNotFoundError:
-      print("Unable to import Backend. Python 3.10 is required on Win/Linux and 3.12 on Embedded Linux.")
+      print(
+        "Unable to import Backend. Python 3.10 is required on Win/Linux and 3.12 on Embedded Linux."
+      )
       cleanup_and_exit(config.args, 1)
     except ImportError:
       print("Unable to import XRT. Please check install.")
@@ -67,8 +71,13 @@ def create_backend(backend_type, config):
     return test_mod.TestImpl(config.tiles, config.design_info, config.args)
 
   # core_dump (default)
+  # Uses the variant name so same-hwGen variants read the correct geometry.
   core_dump_mod = importlib.import_module("mldebug.backend.core_dump_impl")
   return core_dump_mod.CoreDumpImpl(
-    config.tiles, config.ctx_id, config.pid, config.device,
-    core_dump_file=config.core_dump_file, no_header=config.no_header,
+    config.tiles,
+    config.ctx_id,
+    config.pid,
+    config.sub_device or config.device,
+    core_dump_file=config.core_dump_file,
+    no_header=config.no_header,
   )

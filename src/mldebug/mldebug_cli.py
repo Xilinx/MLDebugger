@@ -14,7 +14,14 @@ from ast import literal_eval
 import os
 import time
 
-from mldebug.arch import AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3
+from mldebug.arch import (
+  AIE_DEV_NPU3,
+  AIE_DEV_PHX,
+  AIE_DEV_STX,
+  AIE_DEV_T10,
+  AIE_DEV_T20,
+  AIE_DEV_TEL,
+)
 from mldebug.client_debug import ClientDebug
 from mldebug.input_parser import (
   check_hw_context,
@@ -37,7 +44,8 @@ def _apply_unsupported_kernels_from_args(args):
 
   This must happen before LayerInfo creates Layer objects (ClientDebug -> LayerInfo).
   """
-  from mldebug import layer_info # pylint: disable=import-outside-toplevel
+  from mldebug import layer_info  # pylint: disable=import-outside-toplevel
+
   values = args.unsupported_kernels
   if not values:
     return
@@ -71,7 +79,7 @@ def check_args(args):
     args.interactive = False
     args.aie_only = True
     print("[INFO] Dumping advanced AIE status and exiting (non-interactive)")
-  elif args.exec_cmd is not None:
+  elif args.exec_cmd:
     args.aie_only = True
     args.interactive = False
   elif args.aie_only:
@@ -86,10 +94,16 @@ def check_args(args):
     if not args.dump_aie_status:
       args.interactive = True
     print("[INFO] Using standalone mode for core dumps")
+
   if args.backend == "core_dump" and args.core_dump is None:
-    print("[ERROR] Core dump file is required when backend is 'core_dump'. Please use -h or --help for usage")
+    print(
+      "[ERROR] Core dump file is required when backend is 'core_dump'. Please use -h or --help for usage"
+    )
+
+  # Default overlay for this device
   if args.device == AIE_DEV_NPU3 and not args.overlay:
     args.overlay = "3x4"
+
   return True
 
 
@@ -152,21 +166,23 @@ def launch_debug(args, output_dir):
   _apply_unsupported_kernels_from_args(args)
   handle = ClientDebug(args, context_id, pid, output_dir)
   if args.dump_aie_status:
-    handle.status_handle.get(
-      args.dump_aie_status,
-      advanced=True,
-      guidance=False
-    )
+    handle.status_handle.get(args.dump_aie_status, advanced=True, guidance=False)
     print(f"[INFO] Advanced AIE status written to {args.dump_aie_status}")
     return
+  prompt = InteractivePrompt(handle)
+  if args.load_script is not None:
+    prompt.load_script(args.load_script)
   if args.exec_cmd is not None:
-    InteractivePrompt(handle).exec_cmd(args.exec_cmd)
+    prompt.exec_cmd(args.exec_cmd)
     return
   # Launch Debug
   if args.interactive:
-    InteractivePrompt(handle).run()
+    prompt.run()
+  elif args.load_script is not None:
+    return
   else:
     handle.execute_and_dump()
+
 
 def _dev_cli_help(text):
   """
@@ -176,6 +192,7 @@ def _dev_cli_help(text):
   if v in ("1", "true", "yes", "on"):
     return text
   return argparse.SUPPRESS
+
 
 def app():
   """
@@ -201,17 +218,27 @@ def app():
     required=False,
     metavar="<file>",
   )
-  p.add_argument("-a", "--aie_dir", help="Path to AIE Work Directory. Default: Work", default="Work", metavar="<file>")
+  p.add_argument(
+    "-a",
+    "--aie_dir",
+    help="Path to AIE Work Directory. Default: Work",
+    default="Work",
+    metavar="<file>",
+  )
   # Hidden Argument
   # XRT backend is applicable on the Client host.
   # Test backend is for internal testing
   # Core_dump backend is for reading from the core_dump file
-  p.add_argument("-x", "--backend", help=argparse.SUPPRESS, choices=["xrt", "test", "core_dump"], default="xrt")
-  p.add_argument("-c", "--core_dump",
-               help="Run standalone mode for core-dump inspection.\n"
-               "Use -d flag to specify device.",
-               type=str,
-               metavar = "COREDUMP_FILE")
+  p.add_argument(
+    "-x", "--backend", help=argparse.SUPPRESS, choices=["xrt", "test", "core_dump"], default="xrt"
+  )
+  p.add_argument(
+    "-c",
+    "--core_dump",
+    help="Run standalone mode for core-dump inspection.\nUse -d flag to specify device.",
+    type=str,
+    metavar="COREDUMP_FILE",
+  )
   p.add_argument(
     "--dump-aie-status",
     dest="dump_aie_status",
@@ -219,15 +246,13 @@ def app():
     help="Write AIE status to a file and exit.\n",
     default=None,
   )
-  p.add_argument("--no_header", action="store_true",
-               help="Assume raw core dump without header. Use with -c.")
   # Hidden Argument
   # 'AIE Device type'
   p.add_argument(
     "-d",
     "--device",
     help="Specify device if it can't be detected from aie_dir.",
-    choices=[AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3],
+    choices=[AIE_DEV_PHX, AIE_DEV_STX, AIE_DEV_TEL, AIE_DEV_NPU3, AIE_DEV_T20, AIE_DEV_T10],
     required=False,
   )
   # Hidden Argument
@@ -242,7 +267,9 @@ def app():
   # aie_status to aie_status_<name>.txt
   p.add_argument("-n", "--name", help=argparse.SUPPRESS, required=False, metavar="<name>")
   p.add_argument("-o", "--overlay", help="Overlay used by design. Default: 4x4", metavar="<cxr>")
-  p.add_argument("-i", "--interactive", action="store_true", help="Launch in Interactive Mode. Default: Batch")
+  p.add_argument(
+    "-i", "--interactive", action="store_true", help="Launch in Interactive Mode. Default: Batch"
+  )
   p.add_argument(
     "-l",
     "--output_dir",
@@ -267,20 +294,35 @@ def app():
     metavar="<path>",
   )
   p.add_argument(
-    "-s", "--aie_only", action="store_true", help="Standalone AIE debug. Work dir can be optionally specified."
+    "-s",
+    "--aie_only",
+    action="store_true",
+    help="Standalone AIE debug. Work dir can be optionally specified.",
   )
   p.add_argument(
     "--exec_cmd",
     dest="exec_cmd",
     default=None,
     metavar="<command>",
-    help="Execute a command in the advanced shell (-s) and exit.",
+    help=argparse.SUPPRESS,
+    # help="Execute a command in the advanced shell (-s) and exit.",
   )
   p.add_argument(
-    "-e", "--exit_at_layer", type=int,
-    #help="Run until this layer and exit in batch mode.",
+    "--load_script",
+    dest="load_script",
+    default=None,
+    metavar="<filename>",
+    help=_dev_cli_help(
+      "Execute a Python script in the advanced shell namespace.\n"
+    ),
+  )
+  p.add_argument(
+    "-e",
+    "--exit_at_layer",
+    type=int,
+    # help="Run until this layer and exit in batch mode.",
     help=argparse.SUPPRESS,
-    metavar="LAYER"
+    metavar="LAYER",
   )
   p.add_argument(
     "-l3",
@@ -294,7 +336,7 @@ def app():
     action="store_true",
     help=argparse.SUPPRESS,
     # This was needed for fsp
-    #help="Coordinate with flexmlrt to automatically run the design. Run with ENABLE_ML_DEBUG=3",
+    # help="Coordinate with flexmlrt to automatically run the design. Run with ENABLE_ML_DEBUG=3",
   )
   # Hidden Argument
   # Use this tool with AIESim
@@ -302,9 +344,7 @@ def app():
   p.add_argument(
     "--peano",
     action="store_true",
-    help=_dev_cli_help(
-      "Enable support for peano.\nWith -v flag, peano support is autodetected."
-    ),
+    help=_dev_cli_help("Enable support for peano.\nWith -v flag, peano support is autodetected."),
   )
   p.add_argument(
     "--unsupported_kernels",
@@ -313,8 +353,8 @@ def app():
     default=None,
     metavar="KERNEL",
     help=argparse.SUPPRESS,
-    #help="Additional kernel names to treat as unsupported and skip during execution.\n"
-    #"Example: --unsupported_kernels conv2d_maxpool superkernel_clip1d\n",
+    # help="Additional kernel names to treat as unsupported and skip during execution.\n"
+    # "Example: --unsupported_kernels conv2d_maxpool superkernel_clip1d\n",
   )
   p.add_argument(
     "-f",
@@ -328,25 +368,25 @@ def app():
       "mock_hang",
       "l2_ifm_dump",
       "text_dump",
-      "l1_ofm_dump",
+      #"l1_ofm_dump",
       "skip_iter",
       "dump_temps",
       "multistamp",
       "disable_tg",
-      "skip_iter2"
+      "skip_iter2",
     ],
     help="Specify one or more runtime flags:\n"
     "skip_dump       : Do not dump memory\n"
-    #"layer_status    : Dump AIE status at start of each layer\n"
-    #"l2_dump_only    : Dump only L2 buffers\n"
+    # "layer_status    : Dump AIE status at start of each layer\n"
+    # "l2_dump_only    : Dump only L2 buffers\n"
     "l2_ifm_dump     : Dump only L2 IFM buffers\n"
-    "l1_ofm_dump     : Dump L1 ofm buffers in addition to others\n"
+    #"l1_ofm_dump     : Dump L1 ofm buffers in addition to others\n"
     "text_dump       : Dump in text format\n"
     "skip_iter       : Skip iterations in batch mode when possible\n"
     "skip_iter2      : skip_iter using lcp lock.(Telluride only)\n"
-    #"dump_temps      : Write intermediate (.lst) files to disk\n"
+    # "dump_temps      : Write intermediate (.lst) files to disk\n"
     "multistamp      : Enable N Stamp/Batch mode\n",
-    #"disable_tg      : Disable Step to TG layers\n",
+    # "disable_tg      : Disable Step to TG layers\n",
     # 'mock_hang'    : Simulate hang at one of the layers in test mode
     metavar="<flag1> <flag2>",
   )

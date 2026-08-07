@@ -17,7 +17,7 @@ import time
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from mldebug.utils import LOGGER, cleanup_and_exit, timeit
+from mldebug.utils import LOGGER, cleanup_and_exit, timeit, wait_until
 
 
 class BatchRunner:
@@ -31,8 +31,7 @@ class BatchRunner:
   as the execution backend for InteractiveController.
   """
 
-  def __init__(self, args, state, design_info, impls, aie_utls,
-               dumper, status_handle):
+  def __init__(self, args, state, design_info, impls, aie_utls, dumper, status_handle):
     """
     Args:
       args: Parsed command-line arguments.
@@ -57,23 +56,9 @@ class BatchRunner:
 
   def common_init(self):
     """
-    Common initialization for batch and interactive modes.
-
-    Collapses to single-stamp mode if multistamp flag is not set,
-    enables PC halt for all stamps, and initializes skip-iteration support.
+    Enable PC halt and skip-iteration support for each active replica. The
+    single-stamp collapse is handled up front by the Overlay.
     """
-    if not self.args.run_flags.multistamp and self.design_info.overlay.get_stampcount() > 1:
-      for layer in self.design_info.layers:
-        layer.stamps[:] = layer.stamps[:1]
-      for u in self.aie_utls[1:]:
-        u.initialize_stamp()
-      # In-place list modification so all holders of these references see the change
-      del self.aie_utls[1:]
-      del self.impls[1:]
-      self.design_info.overlay.layout = (1,) + self.design_info.overlay.layout[1:]
-      self.design_info.overlay.stamps = {0: self.design_info.overlay.stamps[0]}
-      LOGGER.log("[INFO] Using single stamp control. Please use multistamp flag for more data.")
-
     for sid in self.design_info.overlay.get_stampids():
       self.impls[sid].enable_pc_halt()
       if self.args.run_flags.skip_iter:
@@ -117,7 +102,7 @@ class BatchRunner:
     start_pc_slot = 0
     end_pc_slot = 1
 
-    stamp = layer.stamps[sid]
+    stamp = layer.get_stamp(sid)
     start_pc = stamp.start_pc
     if not start_pc:
       print(f"Invalid configuration on stamp {sid} layer {layer.layer_order}.")
@@ -135,26 +120,32 @@ class BatchRunner:
 
   def check_pm_reload(self, stamp_id=0):
     """
-    Check if the next ELF will be loaded (PM Reload).
-
+    Check if the next ELF will be loaded (PM Reload) for the given replica.
     Args:
-      stamp_id: Stamp index to check for reload (default 0).
-
+      stamp_id: Replica id to check for reload (default 0).
     Returns:
       True if program memory reload will occur at the next layer, False otherwise.
     """
     layer = self.state.layers[self.state.current_layer]
-    if not self.design_info.work_dir.pm_reload_en[stamp_id] or self.state.current_layer + 1 >= len(self.state.layers):
+    # PM Load is not enabled for this stamp or this is last layer
+    if not self.design_info.work_dir.stamp(
+      stamp_id
+    ).pm_reload_en or self.state.current_layer + 1 >= len(self.state.layers):
+      return False
+    # Stamp id doesn't run for this layer
+    if not layer.runs_replica(stamp_id):
+      return False
+    # Find next layer that runs this stamp
+    if self.design_info.overlay.is_leftmost_in_batch(stamp_id):
+      next_layer = self.state.layers[self.state.current_layer + 1]
+    else:
+      next_layer = self.state.get_next_layer_for_stamp(stamp_id, idx=1)
+    if next_layer is None or not next_layer.runs_replica(stamp_id):
       return False
 
-    if stamp_id > 0 and not self.design_info.is_batched():
-      next_layer = self.state.get_next_layer_for_stamp(stamp_id, idx=1)
-    else:
-      next_layer = self.state.layers[self.state.current_layer + 1]
-
-    if next_layer and stamp_id < len(layer.stamps) and stamp_id < len(next_layer.stamps):
-      return layer.stamps[stamp_id].elf_name != next_layer.stamps[stamp_id].elf_name
-    return False
+    cur_stamp = layer.get_stamp(stamp_id)
+    next_stamp = next_layer.get_stamp(stamp_id)
+    return cur_stamp.elf_name != next_stamp.elf_name
 
   def hit_next_breakpoint(self, sid=0):
     """
@@ -184,100 +175,88 @@ class BatchRunner:
     Args:
       next_layer: Next Layer object to start.
     """
-    stamp_target_layers = {0: next_layer}
-
-    for sid in range(1, len(self.state.pm_reload)):
-      stamp_target_layers[sid] = self.state.get_next_layer_for_stamp(sid)
+    overlay = self.design_info.overlay
+    stamp_target_layers = {}
+    for sid in range(len(self.state.pm_reload)):
+      if overlay.is_leftmost_in_batch(sid):
+        # Leftmost replica of every batch always participates in next_layer.
+        stamp_target_layers[sid] = next_layer
+      else:
+        stamp_target_layers[sid] = self.state.get_next_layer_for_stamp(sid)
 
     for utl in self.aie_utls:
       utl.disable_ecc_event()
 
     bes_to_poll = []
     bes_to_run = []
-    # Stamp0 breakpoint always scheduled
-    # Stamp1+ breakpoint only scheduled at end of 2 stamps or at beginning
+    active_stamps_all_batches = []
+    # Per-batch leftmost stamps (sid 0 within each batch) always have their
+    # breakpoint scheduled on next_layer. The remaining stamps may early-arm
+    # a breakpoint for a *future* layer they actually participate in.
     #
-    # NOTE ON "EARLY" PM-RELOAD ARMING:
-    # `target_layer` for stamp N may be a layer *later* than `next_layer`
-    # (the outer-loop layer currently being scheduled). This happens when a
-    # non-participating stamp skips one or more layers - `get_next_layer_for_stamp`
-    # walks forward to the next layer that actually contains this stamp.
-    #
-    # When that future target layer uses a different ELF for this stamp, we
-    # must arm the start-PC breakpoint AND the combo event (via break_combo
-    # inside _set_layer_breakpoint) *before* the stamp is released with
-    # continue_aie below. If we defer arming until we reach the outer-loop
-    # iteration for the stamp's real target layer, the stamp would have
-    # already been released without a valid breakpoint (or without combo
-    # event coverage across the PM reload) and would either free-run past
-    # its target start PC or stall indefinitely at the end of its previous
-    # layer - blocking progress of the other stamps that depend on it.
-    #
-    # Consequence: the "PM RELOAD" log may appear while scheduling an outer
-    # layer that this stamp does not participate in. That is intentional -
-    # it marks when the breakpoint is *armed*, not when the reload
-    # physically occurs. The post-poll block below finalizes the combo
-    # event (enable_pc_halt + clear pm_reload[sid]) only once the outer
-    # loop actually reaches that stamp's target layer, guarded by
-    # `break_on_stamp_scheduled[sid]` so we do not re-arm on the way there.
+    # Example for "EARLY" PM-RELOAD ARMING:
+    #   Layer 0  stamp0 stamp1 stamp2
+    #   Layer 1  stamp0 stamp1
+    #                          <PM Reload Stamp2>
+    #   Layer 3  stamp0 stamp1 stamp2
+    # Step to layer 0 : step to all 3 stamps
+    # Step to layer 1 : run stamp0,1 Arm Stamp2 via combo and continue it
+    #                   PM Reload message appears early for stamp 2
+    # Step to layer 3 : step to all 3 stamps
     for sid, pml in enumerate(self.state.pm_reload):
       target_layer = stamp_target_layers.get(sid)
-      if not target_layer or (sid > 0 and self.state.break_on_stamp_scheduled[sid]):
+      if not target_layer:
         continue
-      self.state.break_on_stamp_scheduled[sid] = True
-      if pml:
-        if target_layer.layer_order != next_layer.layer_order:
-          LOGGER.log(
-            f"\nArming PM RELOAD on stamp {sid} for Layer_{target_layer.layer_order} "
-          )
-        else:
-          LOGGER.log(f"\nPM RELOAD on stamp: {sid}")
-      stamp = target_layer.stamps[sid]
-      skip_end_pc = not (self.args.run_flags.l1_ofm_dump and stamp.end_pc)
-      self._set_layer_breakpoint(target_layer, skip_end_pc, sid, pml)
-      bes_to_run.append(self.impls[sid])
-      if target_layer.layer_order == next_layer.layer_order:
+      is_leftmost = overlay.is_leftmost_in_batch(sid)
+      reaches_now = target_layer.layer_order == next_layer.layer_order
+      already_armed = not is_leftmost and self.state.break_on_stamp_scheduled[sid]
+      stamp = target_layer.get_stamp(sid)
+
+      if not already_armed:
+        self.state.break_on_stamp_scheduled[sid] = True
+        if pml:
+          if not reaches_now:
+            LOGGER.log(f"\nArming PM RELOAD on stamp {sid} for Layer_{target_layer.layer_order} ")
+          else:
+            LOGGER.log(f"\nPM RELOAD on stamp: {sid}")
+        skip_end_pc = not (self.args.run_flags.l1_ofm_dump and stamp.end_pc)
+        self._set_layer_breakpoint(target_layer, skip_end_pc, sid, pml)
+        bes_to_run.append(self.impls[sid])
+
+      # We have reached previously scheduled breakpoint
+      if reaches_now:
         bes_to_poll.append(self.impls[sid])
+        active_stamps_all_batches.append((sid, pml, stamp))
 
     # Run stamps at exact same time
     for be in bes_to_run:
       be.continue_aie()
 
     # Poll stamps until breakpoint is hit
-    timeout = 10
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-      if self.args.backend == "test":
-        break
-      time.sleep(0.1)
-      if all(be.poll_core_status() for be in bes_to_poll):
-        break
+    if self.args.backend != "test":
+      wait_until(lambda: all(be.poll_core_status() for be in bes_to_poll))
 
-    # When combo events are used, it takes a few cycles to
-    # hit the breakpoint, so pc might have moved
-    for sid, pml in enumerate(self.state.pm_reload):
-      ta_layer = stamp_target_layers.get(sid)
-      if ta_layer is not None and next_layer.layer_order == ta_layer.layer_order:
-        stamp = next_layer.stamps[sid]
-        pcs = self.impls[sid].read_core_pc(True)
+    # Now check that breakpoints were hit at the right PC for each stamp
+    # that actually targets next_layer. When combo events are used the PC
+    # may have moved by a few cycles past the start_pc.
+    for sid, pml, stamp in active_stamps_all_batches:
+      pcs = self.impls[sid].read_core_pc(True)
+      utl = self.aie_utls[sid]
+      is_correct_pc = utl.pcs_match_target(pcs, stamp.start_pc, allow_combo_delay=pml)
 
-        # combo event trigger has one cycle delay
-        is_correct_pc = utl.pcs_match_target(pcs, stamp.start_pc, allow_combo_delay=pml)
+      if is_correct_pc:
+        self._process_start_breakpoint(next_layer, 1, sid=sid)
+      else:
+        print(f"[ERROR] Step to start of Layer_{next_layer.layer_order} failed on Stamp_{sid}")
+        self._process_err()
+      if pml:
+        self.impls[sid].enable_pc_halt()
+        self.state.pm_reload[sid] = False
+      # Breakpoint has now been observed for this stamp;
+      self.state.break_on_stamp_scheduled[sid] = False
 
-        if is_correct_pc:
-          self._process_start_breakpoint(next_layer, 1, sid=sid)
-        else:
-          print(f"[ERROR] Step to start of Layer_{next_layer.layer_order} failed on Stamp_{sid}")
-          self._process_err()
-        if pml:
-          self.impls[sid].enable_pc_halt()
-          self.state.pm_reload[sid] = False
-        # Breakpoint has now been observed for this stamp; clear the
-        # "already scheduled" guard so the next outer-loop layer can
-        # arm it normally. For stamps whose target_layer is *not* yet
-        # this next_layer (early-armed for a future target), the flag
-        # stays True - preventing re-arm/continue while we walk past.
-        self.state.break_on_stamp_scheduled[sid] = False
+    # Save for run_layer to consume.
+    self.state.active_stamps_all_batches = active_stamps_all_batches
 
   # ------------------------------------------------------------------ #
   # Core execution primitives (shared by batch and interactive)
@@ -294,7 +273,9 @@ class BatchRunner:
     if not self.args.aie_only:
       layer = self.state.get_current_layer()
       if layer:
-        stamp_names = ", ".join([f"Stamp {i}: {stamp.name}" for i, stamp in enumerate(layer.stamps)])
+        stamp_names = ", ".join(
+          [f"Stamp {i}: {stamp.name}" for i, stamp in enumerate(layer.stamps)]
+        )
         LOGGER.log(f"Stopped at Start of Kernel(s): {stamp_names}")
         LOGGER.log(f"Current Layer: {layer.layer_order}, Iteration: {self.state.cur_it}")
         LOGGER.log(str(layer))
@@ -392,9 +373,9 @@ class BatchRunner:
       cur_it: Starting iteration number (default 1).
 
     Returns:
-      True on success, False on error.
+      Success or error.
     """
-    stamp = layer.stamps[sid]
+    stamp = layer.get_stamp(sid)
     utl = self.aie_utls[sid]
 
     skip_end_pc = not (self.args.run_flags.l1_ofm_dump and stamp.end_pc)
@@ -405,7 +386,8 @@ class BatchRunner:
       self.state.error = not utl.skip_iterations(target_itr - cur_it, sid)
     elif self.args.run_flags.skip_iter2:
       self.state.error = not utl.skip_iterations_to_lock_acq(
-         self.design_info.work_dir.post_layer_lock_acq_pcs[sid], target_itr - cur_it, sid)
+        self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc, target_itr - cur_it, sid
+      )
     else:
       while cur_it < target_itr:
         self.hit_next_breakpoint(sid)
@@ -418,7 +400,9 @@ class BatchRunner:
           cur_it += 1
           self._process_end_breakpoint(layer, cur_it, sid)
         else:
-          print(f"[ERROR] Abort Execution of Stamp {sid}. PC List: {all_pc} doesn't match {stamp.start_pc}")
+          print(
+            f"[ERROR] Abort Execution of Stamp {sid}. PC List: {all_pc} doesn't match {stamp.start_pc}"
+          )
           self.state.error = True
           break
 
@@ -435,21 +419,29 @@ class BatchRunner:
       target_itr: Target iteration (default None = last).
       cur_it: Initial iteration number (default None = 1).
     """
-    n_stamp = len(layer.stamps)
     if not cur_it:
       cur_it = 1
 
-    with ThreadPoolExecutor(max_workers=n_stamp) as executor:
-      futures = [executor.submit(self._run_stamp, layer, sid, target_itr, cur_it) for sid in range(n_stamp)]
+    # active_stamps_all_batches is determined by schedule_layer_start
+    stamps = self.state.active_stamps_all_batches
+
+    with ThreadPoolExecutor(max_workers=len(stamps)) as executor:
+      futures = [
+        executor.submit(self._run_stamp, layer, sid, target_itr, cur_it)
+        for sid, _pml, _stamp in stamps
+      ]
       for f in as_completed(futures):
         res = f.result()
         if not res:
           self.state.error = True
 
-    # At final iteration of a multistamp layer, drain stamps that have no
-    # remaining future layer so they don't sit halted at their last breakpoint.
-    if n_stamp > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):
-      for sid in range(1, n_stamp):
+    # Unhalt right replicas that have no remaining future layer
+    overlay = self.design_info.overlay
+    total_replicas = len(self.state.pm_reload)
+    if total_replicas > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):
+      for sid in range(total_replicas):
+        if overlay.is_leftmost_in_batch(sid):
+          continue
         if not self.state.get_next_layer_for_stamp(sid, idx=1):
           self.impls[sid].continue_aie()
 
@@ -464,23 +456,27 @@ class BatchRunner:
   def execute_and_dump(self):
     """
     Execute all layers in batch mode, dumping buffers as required.
-
     Primary entry point for batch mode execution in MLDebugger.
     """
     self.common_init()
     overlay = self.design_info.overlay
 
     for layer in self.state.update_layer():
-      LOGGER.log(f"Stepping to layer {layer.layer_order}: {layer.stamps[0].name},"
-                 f" stamps: {len(layer.stamps)}, iters {layer.lcp.num_iter}")
+      LOGGER.log(
+        f"Stepping to layer {layer.layer_order}: {layer.stamps[0].name},"
+        f" stamps: {len(layer.stamps)}, iters {layer.lcp.num_iter}"
+      )
       self.schedule_layer_start(layer)
       self.run_layer(layer)
-      for sid in range(len(layer.stamps)):
-        self.state.pm_reload[sid] = self.check_pm_reload(sid)
+
+      # Only recompute reload state for replicas that run THIS layer
+      for sid, _ in enumerate(self.state.pm_reload):
+        if layer.runs_replica(sid):
+          self.state.pm_reload[sid] = self.check_pm_reload(sid)
 
     for sid in overlay.get_stampids():
       self.aie_utls[sid].initialize_stamp()
-      self.impls[sid].continue_aie()
+
     LOGGER.log("\nFinished Execution")
     self._handle_fsp()
     self._write_run_summary("SUCCESS")

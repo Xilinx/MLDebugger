@@ -25,8 +25,10 @@ unsupported_superkernels = [
   # Stepping to this causes lock stall
   "mllib_graphs::resize_adf_wrapper",
   # This has many sublayers and needs to be better understood
-  "mllib_graphs::mha_type1::mha_adf_wrapper"
-  ]
+  "mllib_graphs::mha_type1::mha_adf_wrapper",
+  # Causes failure. TODO: investigate
+  "superkernel_eltunary",
+]
 
 
 def _strip_template(name):
@@ -37,6 +39,7 @@ def _strip_template(name):
   """
   idx = name.find("<")
   return name[:idx] if idx != -1 else name
+
 
 # For now skip these kernels for end pc
 skip_end_pc_kernels = [
@@ -107,11 +110,14 @@ class Buffer:
     self.wts = wts
     size_shift = self._get_size_shift(entry, size_shift)
 
+    # pong can be missing (no double buffering)
     if "l1_ping" in entry:
       ping = entry["l1_ping"]
-      pong = entry["l1_pong"]
-      self.l1 = L1Buffer(int(ping[0], 16), ping[1] * size_shift, int(pong[0], 16), pong[1] * size_shift)
-    
+      pong = entry.get("l1_pong", ping)
+      self.l1 = L1Buffer(
+        int(ping[0], 16), ping[1] * size_shift, int(pong[0], 16), pong[1] * size_shift
+      )
+
     # Handle both "l2" format and "l2_ping/l2_pong" format
     l2_bufs_list = []
     if "l2_ping" in entry:
@@ -198,6 +204,7 @@ class Stamp:
       end_pc (int): End program counter.
       elf_name (str): Associated ELF object.
   """
+
   name: str
   start_pc: int = 0
   end_pc: int = 0
@@ -228,16 +235,19 @@ class Layer:
   Contains all buffer, iteration, and kernel (stamp) mapping information.
   """
 
-  def __init__(self, info, size_shift, version, aie_iface, num_stamps, mladf_report):
+  def __init__(self, info, size_shift, version, aie_iface, num_stamps, mladf_report, num_batches=1):
     """
     Initialize a Layer object using given metadata, populating buffer and kernel/stamp lists.
 
     Args:
-        info (dict): Layer metadata.
-        size_shift (int): Size shift parameter.
-        version: Software version object.
-        aie_iface: AIE interface object.
-        num_stamps (int): Number of stamps in overlay.
+      info (dict): Layer entry in buffer_info
+      size_shift (int): Size shift parameter.
+      version: Software version object.
+      aie_iface: AIE interface object.
+      num_stamps (int): Number of stamps per batch (S from BxSxCxR overlay).
+      mladf_report: Optional MladfReport for templated-graph layers.
+      num_batches (int): Number of batches (B from BxSxCxR overlay). Each
+        batch is a data-parallel copy of the per-batch stamps; defaults to 1.
     """
     self.flexml_ids = []
     self.l3_ifm_buffers = []
@@ -250,7 +260,11 @@ class Layer:
     self.lcp = Lcp()
     self.pm_work_dir = info.get("pm", None)
     self.is_unsupported = False
-    self.is_concat = False
+    self.num_batches = num_batches
+    # Global stamps-per-batch (S from BxSxCxR), captured before the per-layer
+    # reduction below. Flat replica ids map to a per-batch stamp via `sid % S`,
+    # so this is the correct modulus even when this layer runs fewer stamps.
+    self.overlay_stamps_per_batch = num_stamps
 
     self.lcp.is_tg = "templated_graph" in info
     kname = [i.lower() for i in info["kernel_name"]][0]
@@ -262,27 +276,38 @@ class Layer:
     n_stamps = info.get("no_of_stamps")
     if n_stamps and n_stamps < num_stamps:
       num_stamps = n_stamps
+
     self.stamps = [Stamp(name=kname) for _ in range(num_stamps)]
 
+    # 1. Layers without any kernel should be skipped
+    # 2. Unsupported superkernel should be skipped
+    if info.get("is_concat") or not kname or any(k in kname for k in unsupported_superkernels):
+      LOGGER.verbose_print(
+        f"[WARNING] unsupported kernel {kname} at Layer {self.layer_order} will be skipped."
+      )
+      self.is_unsupported = True
+      return
+
+    # Fill missing TG metadata from mladf report
     if self.lcp.is_tg:
       for sid, stamp in enumerate(self.stamps):
         stamp.name = mladf_report.get_skname_for_bilo(self.layer_order, sid)
         stamp.elf_name = mladf_report.get_elfid_for_bilo(self.layer_order, sid)
-        if not stamp.name or stamp.elf_name == -1 or any(k in stamp.name for k in unsupported_superkernels):
-          LOGGER.verbose_print(f"[WARNING] unsupported kernel {stamp.name} at Layer {self.layer_order} will be skipped.")
+        if (
+          not stamp.name
+          or stamp.elf_name == -1
+          or any(k in stamp.name for k in unsupported_superkernels)
+        ):
+          LOGGER.verbose_print(
+            f"[WARNING] unsupported kernel {stamp.name} at Layer {self.layer_order} will be skipped."
+          )
           self.is_unsupported = True
           return
       self.lcp.num_iter = mladf_report._get_iters_for_bilo(self.layer_order)
 
     self._initialize_l3_buffers(info, version)
-    # 1. Layers without any kernel should be skipped
-    # 2. Unsupported superkernel should be skipped
-    self.is_concat = info.get("is_concat") or not kname
-    if self.is_concat:
-      LOGGER.verbose_print(f"[WARNING] unsupported kernel {kname} at Layer {self.layer_order} will be skipped.")
-      self.is_unsupported = True
-      return
 
+    # No L2 support for templated graph layers
     if self.lcp.is_tg:
       return
 
@@ -290,6 +315,19 @@ class Layer:
     self._initialize_buffers(info, aie_iface, size_shift, version)
     self._initialize_iters(info, version)
     LOGGER.verbose_print(f"{self.layer_order}: {kname} {self.lcp.num_iter}")
+
+  def runs_replica(self, sid):
+    """
+    A layer can run less no of stamps than maximum.
+    """
+    return (sid % self.overlay_stamps_per_batch) < len(self.stamps)
+
+  def get_stamp(self, sid):
+    """
+    Per-batch stamp metadata for flat replica `sid`, indexed by `sid % S`.
+    Caller must ensure participation (see `runs_replica`).
+    """
+    return self.stamps[int(sid % self.overlay_stamps_per_batch)]
 
   def _initialize_flexml_ids(self, info):
     """
@@ -372,7 +410,10 @@ class Layer:
           if size.get("type"):
             size_shift = SIZE_BYTES.get(size["type"], 1)
           buffer = L3Buffer(
-            name=full_l3_name, tensor_name=size.get("tensor_name"), size=int(size["size"] * size_shift), offset=None
+            name=full_l3_name,
+            tensor_name=size.get("tensor_name"),
+            size=int(size["size"] * size_shift),
+            offset=None,
           )
           if "ifm" in fm:
             self.l3_ifm_buffers.append(buffer)
@@ -382,7 +423,9 @@ class Layer:
           break
 
       if not is_substr:
-        raise RuntimeError(f"The sub-name {sub_name} is not in the list of full L3 names {l3_buffer_names}")
+        raise RuntimeError(
+          f"The sub-name {sub_name} is not in the list of full L3 names {l3_buffer_names}"
+        )
 
   def _initialize_l3_buffers(self, info, version):
     """
@@ -397,13 +440,18 @@ class Layer:
       if "ifm" in info:
         for _, entry in enumerate(info["ifm"], start=1):
           if "l3" in entry:
-            self._match_l3_buffer("ifm", entry["l3_buffer_names"], entry["l3"], SIZE_BYTES.get(entry.get("dtype"), 1))
+            self._match_l3_buffer(
+              "ifm", entry["l3_buffer_names"], entry["l3"], SIZE_BYTES.get(entry.get("dtype"), 1)
+            )
     else:
       fms = ["ifm", "ifm2", "ofm"]
       for name in fms:
         if name in info and "l3" in info[name]:
           self._match_l3_buffer(
-            name, info[name]["l3_buffer_names"], info[name]["l3"], SIZE_BYTES.get(info[name].get("dtype"), 1)
+            name,
+            info[name]["l3_buffer_names"],
+            info[name]["l3"],
+            SIZE_BYTES.get(info[name].get("dtype"), 1),
           )
 
   def _initialize_buffers(self, info, aie_iface, size_shift, version):
@@ -457,41 +505,54 @@ class LayerInfo:
         args: Namespace of configuration and input files (from argparser or similar).
     """
     self.layers = []
-    self.layout = [1, 4, 4]
+    # Layout for Overlay: (batches, stamps_per_batch, nrow, ncol). Updated by
+    # _read_buffer_info when a buffer_info.json is supplied.
+    self.layout = [1, 1, 4, 4]
     self.aie_iface = args.aie_iface
     self.x2 = False
     self.x2_work_dirs = {}
     self.layer_workdir_map = {}
-    self.device_batch_size = 1
     self.mladf_report = None
 
     has_bi = args.buffer_info and Path(args.buffer_info).is_file()
-    use_mladf = args.mladf_report and Path(args.mladf_report).is_file() and not args.run_flags.disable_tg
+    use_mladf = (
+      args.mladf_report and Path(args.mladf_report).is_file() and not args.run_flags.disable_tg
+    )
     data = None
     # 1. Parse the buffer info to get Layout
     if has_bi:
       data = self._read_buffer_info(args.buffer_info)
     # 2. Initialize Overlay from Layout
-    self.overlay = Overlay(args, self.layout)
+    self.overlay = Overlay(
+      args.aie_iface, self.layout, overlay=args.overlay, multistamp=args.run_flags.multistamp
+    )
+    # Re-sync local view in case Overlay applied -o overrides.
+    num_batches = self.overlay.get_batch_count()
+    num_stamps = self.overlay.get_stamps_per_batch()
     # 3. Parse mladf report.
     # TBD: memory optimize this as this json can be large
     if not args.aie_only and has_bi and use_mladf:
-      self.mladf_report = MladfReport(args.buffer_info, args.mladf_report, self.overlay.get_stampwidth())
+      self.mladf_report = MladfReport(
+        args.buffer_info, args.mladf_report, self.overlay.get_stampwidth()
+      )
     # 4. Initialize Layers
     if not args.aie_only:
-      num_stamps = len(self.overlay.get_stampids())
-      self._init_layers(data, args.aie_iface, num_stamps)
+      self._init_layers(data, args.aie_iface, num_stamps, num_batches)
     # 5: Parse work dir
     if self.x2:
       for layer in self.layers:
         if layer.pm_work_dir:
           path = os.path.join(args.aie_dir, layer.pm_work_dir)
           if layer.pm_work_dir not in self.x2_work_dirs:
-            self.x2_work_dirs[layer.pm_work_dir] = WorkDir(path, args.peano, self.overlay)
+            self.x2_work_dirs[layer.pm_work_dir] = WorkDir(
+              path, args.peano, self.overlay, self.aie_iface.ARCH_NAME
+            )
           self.layer_workdir_map[layer.layer_order] = self.x2_work_dirs[layer.pm_work_dir]
       self.work_dir = next(iter(self.layer_workdir_map.values()))
     else:
-      self.work_dir = WorkDir(args.aie_dir, args.peano, self.overlay, args.run_flags.dump_temps)
+      self.work_dir = WorkDir(
+        args.aie_dir, args.peano, self.overlay, self.aie_iface.ARCH_NAME, args.run_flags.dump_temps
+      )
 
     if not args.aie_only:
       # Set PC Value for layers
@@ -528,12 +589,12 @@ class LayerInfo:
 
   def is_stamped(self):
     """
-    Check if design is a multi-stamp (multi-superkernel) program.
+    Check if the design has more than one stamp per batch.
 
     Returns:
-        bool: True if stamped/multi-stamp, False otherwise.
+        bool: True if stamps_per_batch > 1, False otherwise.
     """
-    return len(self.overlay.get_stampids()) > 1
+    return self.overlay.get_stamps_per_batch() > 1
 
   def is_batched(self):
     """
@@ -542,7 +603,7 @@ class LayerInfo:
     Returns:
         bool: True if more than one batch, False otherwise.
     """
-    return self.device_batch_size > 1
+    return self.overlay.get_batch_count() > 1
 
   def _create_info(self):
     """
@@ -554,18 +615,24 @@ class LayerInfo:
     info = {}
     for n in range(len(self.overlay.get_stampids())):
       info[n] = {}
+    s_per_batch = self.overlay.get_stamps_per_batch()
     for layer in self.layers:
       order = layer.layer_order
-      for sid, stamp in enumerate(layer.stamps):
-        imap = info[sid]
-        elf = stamp.elf_name
-        if not elf:
-          continue
-        if elf not in imap:
-          imap[elf] = [order, order]
-        else:
-          imap[elf][0] = min(imap[elf][0], order)
-          imap[elf][1] = max(imap[elf][1], order)
+      # Map each per-batch stamp to its flat replica id in every batch:
+      # sid = b * S + s. Reduced layers (s < stamps_per_batch) simply omit
+      # the higher per-batch stamps, mirroring participation across batches.
+      for b in range(self.overlay.get_batch_count()):
+        for s, stamp in enumerate(layer.stamps):
+          sid = b * s_per_batch + s
+          imap = info[sid]
+          elf = stamp.elf_name
+          if not elf:
+            continue
+          if elf not in imap:
+            imap[elf] = [order, order]
+          else:
+            imap[elf][0] = min(imap[elf][0], order)
+            imap[elf][1] = max(imap[elf][1], order)
     return info
 
   def print_info(self):
@@ -576,7 +643,7 @@ class LayerInfo:
     sep = "--------------------------------------------"
     m = "Design info (Excluding TG Layer IDs)\n"
     m += f"{sep}\nFlexml Layer Count: {len(self.layers)}\n{sep}"
-    if not self.work_dir.elf_flxmlid_maps or not self.layers:
+    if not self.work_dir.stamps or not self.layers:
       return
     for sid, imap in info.items():
       m += f"\nStamp {sid}: "
@@ -649,16 +716,18 @@ class LayerInfo:
     for layer in self.layers:
       layer.l3_buffers = layer.l3_ofm_buffers if self.x2 else layer.l3_ifm_buffers
 
-      # Duplicate L3 buffers for multi-stamp designs (batched designs)
+      # Duplicate L3 buffers per additional batch (data-parallel copies).
+      # Stamps within a batch share the same L3 IFM/OFM region, so we only
+      # replicate across batches, not across per-batch stamps.
       if self.is_batched():
         original_buffers = list(layer.l3_buffers)
-        for stamp_idx in range(1, self.device_batch_size):
+        for b in range(1, self.overlay.get_batch_count()):
           for orig_buffer in original_buffers:
             stamped_buffer = L3Buffer(
-              name=f"{orig_buffer.name}_stamp_{stamp_idx}",
+              name=f"{orig_buffer.name}_stamp_{b}",
               tensor_name=orig_buffer.tensor_name,
               size=orig_buffer.size,
-              offset=None
+              offset=None,
             )
             layer.l3_buffers.append(stamped_buffer)
 
@@ -733,7 +802,15 @@ class LayerInfo:
 
   def _read_buffer_info(self, buffer_info_file):
     """
-    Load and parse the buffer_info JSON, extracting layout and batch size.
+    Load and parse the buffer_info JSON, extracting the (B, S, R, C) layout.
+
+    buffer_info encodes the 4D overlay shape across two fields:
+      .meta.layout            -> [stamps_in_overlay, R, C]
+      .meta.device_batch_size -> B (number of data-parallel batch copies)
+      .meta.max_stamps_used   -> S (per-batch stamps actually used; may be
+                                   smaller than stamps_in_overlay). Falls
+                                   back to max(no_of_stamps) across layers,
+                                   then to the layout's stamp count.
 
     Args:
         buffer_info_file (str): Path to buffer_info JSON.
@@ -741,43 +818,48 @@ class LayerInfo:
     Returns:
         dict: Parsed JSON object from file.
     Side Effects:
-        - Sets self.layout, self.device_batch_size, self.x2.
+        - Sets self.layout to (B, S, R, C), self.x2.
     """
     print("Initializing Buffer Info ...")
     with open(buffer_info_file, encoding="utf-8") as fd:
       data = json.load(fd)
-    self.layout = data[".meta"].get("layout")
-    self.device_batch_size = data[".meta"].get("device_batch_size", 1)
 
-    # Layout now represents Full overlay but design can choose
-    # to use only a part of it
-    stampcount = data[".meta"].get("max_stamps_used")
-    if stampcount:
-      self.layout[0] = stampcount
-    elif data.get("layers"):
-      self.layout[0] = max(lyr.get("no_of_stamps", 1) for _, lyr in data["layers"].items() )
-    # Else use old style
+    raw_layout = data[".meta"].get("layout") or [1, 4, 4]
+    overlay_stamps, nrow, ncol = raw_layout
 
-    # Treat mBnS as 1BnS
-    if self.device_batch_size > 1:
-      if self.layout[0] > 1:
-        LOGGER.log("[WARNING] Currently mBatch x nStamp is unsupported. Setting batchcount to 1.")
-        self.device_batch_size = 1
+    # B (batches) comes from device_batch_size.
+    batches = data[".meta"].get("device_batch_size", 1)
+
+    # S (per-batch stamps used) comes from max_stamps_used, with sensible
+    # fallbacks: layer hints, then the overlay's nominal stamp count.
+    stamps = data[".meta"].get("max_stamps_used")
+
+    # Stamp group results in one stamp being used as N stamps
+    max_stamp_group_size = data[".meta"].get("max_stamp_group_size", 1)
+
+    if not stamps:
+      if data.get("layers"):
+        stamps = max(lyr.get("no_of_stamps", 1) for _, lyr in data["layers"].items())
       else:
-        self.layout[0] = self.device_batch_size
-        LOGGER.log("Batched design detected")
+        stamps = overlay_stamps
 
+    stamps = stamps // max_stamp_group_size
+
+    self.layout = (batches, stamps, nrow, ncol)
+    if batches > 1:
+      LOGGER.log("Batched design detected")
     self.x2 = data[".meta"].get("flow") == "x2"
     return data
 
-  def _init_layers(self, raw_info, aie_iface, num_stamps):
+  def _init_layers(self, raw_info, aie_iface, num_stamps, num_batches=1):
     """
     Parse all layer entries from metadata and populate self.layers.
 
     Args:
         raw_info (dict): Parsed buffer_info JSON metadata.
         aie_iface: AIE interface object.
-        num_stamps (int): Number of stamps identified from overlay.
+        num_stamps (int): Stamps per batch (S from BxSxCxR).
+        num_batches (int): Number of batches (B from BxSxCxR).
     """
     version = Version.from_string(raw_info[".meta"]["version"])
     size_shift = raw_info[".meta"].get("size_shift")
@@ -794,7 +876,9 @@ class LayerInfo:
     raw_layers = sorted(raw_layers.items(), key=lambda item: item[1]["layer_order"])
     for entry in raw_layers:
       info = entry[1]
-      layer = Layer(info, size_shift, version, aie_iface, num_stamps, self.mladf_report)
+      layer = Layer(
+        info, size_shift, version, aie_iface, num_stamps, self.mladf_report, num_batches=num_batches
+      )
       self.layers.append(layer)
 
   def _initialize_layers_from_workdir_x2(self, args):
@@ -816,10 +900,13 @@ class LayerInfo:
     self.layers = [layer for layer in self.layers if not layer.lcp.is_tg]
     if not self.layers:
       raise RuntimeError("No layers found in the design.")
-    for sid in self.overlay.get_stampids():
+    # Resolve PCs once per stamp
+    for sid in range(self.overlay.get_stamps_per_batch()):
       for layer in self.layers:
-        flist = list(self.layer_workdir_map[layer.layer_order].aie_functions[sid].values())[0]
-        self.layer_workdir_map[layer.layer_order].pm_reload_en[sid] = True
+        flist = list(self.layer_workdir_map[layer.layer_order].stamps[sid].aie_functions.values())[
+          0
+        ]
+        self.layer_workdir_map[layer.layer_order].stamps[sid].pm_reload_en = True
         for f in flist:
           if _strip_template(layer.stamps[sid].name.lower()) == _strip_template(f.name.lower()):
             stamp = layer.stamps[sid]
@@ -856,45 +943,68 @@ class LayerInfo:
 
     # Hierarchy of Data:
     # Stamp <- Elf <- Layers
-    # AIECompiler only knows flexmlIDs so we use that to match with correct layer
-    for sid in self.overlay.get_stampids():
-      has_pm_reload = self.work_dir.pm_reload_en[sid]
-      for elf_name, flist in self.work_dir.aie_functions[sid].items():
-        LOGGER.verbose_print(f"Initializing layers for stamp {sid} ELF: {elf_name}")
-        elf_id = elf_name.split("reloadable")[-1]
-        for f, l in itertools.product(flist, self.layers):
-          if sid > len(l.stamps) - 1:
-            continue
-          if _strip_template(l.stamps[sid].name.lower()) == _strip_template(f.name.lower()):
-            stamp = l.stamps[sid]
-            if l.lcp.is_tg and stamp.elf_name == elf_id:
-              stamp.start_pc = f.start_pc
-              if f.name.lower() not in skip_end_pc_kernels:
-                stamp.end_pc = f.final_lock_release_pc
-              continue
-            # Check if this layer is present in the elf
-            # In buffer_info the flexml_ids might not be in order of stamps
-            if has_pm_reload and not any(i in self.work_dir.elf_flxmlid_maps[sid][elf_id] for i in l.flexml_ids):
-              continue
-            LOGGER.verbose_print("Layer found:", l.layer_order, stamp.name)
-            stamp.elf_name = elf_id
-            stamp.start_pc = f.start_pc
-            if f.name.lower() not in skip_end_pc_kernels:
-              stamp.end_pc = f.final_lock_release_pc
+    # AIECompiler only knows flexmlIDs so we use that to match with correct layer.
+    # For each layer we pick the ELF its kernel lives in, then fill in the PCs.
+    for sid in range(self.overlay.get_stamps_per_batch()):
+      aiec_info = self.work_dir.stamp(sid)
+      # Index functions by elf_id and stripped name for direct lookup.
+      funcs_by_elf = {
+        elf_name.split("reloadable")[-1]: {_strip_template(f.name.lower()): f for f in flist}
+        for elf_name, flist in aiec_info.aie_functions.items()
+      }
+      for layer in self.layers:
+        if sid >= len(layer.stamps):
+          continue
+        stamp = layer.stamps[sid]
+        key = _strip_template(stamp.name.lower())
+        # Pick the ELF this layer's kernel comes from.
+        if layer.lcp.is_tg:
+          # TG layers already carry their elf_name.
+          elf_id = stamp.elf_name
+        elif aiec_info.pm_reload_en:
+          # In buffer_info the flexml_ids might not be in order of stamps, so
+          # match on flexml-id membership and name within the same ELF.
+          elf_id = next(
+            (
+              e
+              for e, fns in funcs_by_elf.items()
+              if key in fns and any(i in aiec_info.elf_flxmlid_maps[e] for i in layer.flexml_ids)
+            ),
+            None,
+          )
+        else:
+          elf_id = next((e for e, fns in funcs_by_elf.items() if key in fns), None)
+
+        f = funcs_by_elf.get(elf_id, {}).get(key) if elf_id is not None else None
+        if f is None:
+          continue
+        LOGGER.verbose_print("Layer found:", layer.layer_order, stamp.name)
+        if not layer.lcp.is_tg:
+          stamp.elf_name = elf_id
+        stamp.start_pc = f.start_pc
+        if f.name.lower() not in skip_end_pc_kernels:
+          stamp.end_pc = f.final_lock_release_pc
 
     # Under right conditions, we don't even go through iterations
+    # This is optional enhancement for stability.
     if args.run_flags.skip_iter:
       for idx, layer in enumerate(self.layers):
         if idx >= len(self.layers) - 1:
           layer.lcp.num_iter = 1
           break
-        next_layer_stamps = self.layers[idx+1].stamps
+        next_layer_stamps = self.layers[idx + 1].stamps
         if args.run_flags.multistamp:
-          if (layer.stamps[0].name != next_layer_stamps[0].name
+          if (
+            layer.stamps[0].name != next_layer_stamps[0].name
             and len(layer.stamps) == len(next_layer_stamps)
-            and all(layer.stamps[i].elf_name == next_layer_stamps[i].elf_name for i in range(len(layer.stamps)))
-            ):
+            and all(
+              layer.stamps[i].elf_name == next_layer_stamps[i].elf_name
+              for i in range(len(layer.stamps))
+            )
+          ):
             layer.lcp.num_iter = 1
-        elif (layer.stamps[0].name != next_layer_stamps[0].name
-            and layer.stamps[0].elf_name == next_layer_stamps[0].elf_name ):
+        elif (
+          layer.stamps[0].name != next_layer_stamps[0].name
+          and layer.stamps[0].elf_name == next_layer_stamps[0].elf_name
+        ):
           layer.lcp.num_iter = 1

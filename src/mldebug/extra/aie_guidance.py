@@ -14,24 +14,37 @@ from enum import Enum
 # AIE Core Status Register Bit Masks
 # These correspond to bit positions in the CORE_STATUS register
 # NOTE: These are the same for all AIE generations
-CORE_STATUS_ENABLED_MASK = 0x1    # Bit 0: Core enabled/disabled
-CORE_STATUS_RESET_MASK = 0x2      # Bit 1: Core in reset state
+CORE_STATUS_ENABLED_MASK = 0x1  # Bit 0: Core enabled/disabled
+CORE_STATUS_RESET_MASK = 0x2  # Bit 1: Core in reset state
+
 
 # Severity levels for categorizing guidance rule failures
 class Severity(Enum):
   """Severity levels for guidance messages"""
+
   ERROR = "error"
   WARNING = "warning"
   INFO = "info"
+
 
 # Result of a single guidance rule evaluation with pass/fail status and details
 class GuidanceResult:
   """Result of a single guidance rule check"""
 
-  def __init__(self, rule_id: str, rule_name: str, category: str, subcategory: str,
-               passed: bool, severity: Severity, message: str, guidance: str,
-               tile_location: Optional[Tuple[int, int]] = None,
-               actual_value: Any = None, expected_value: Any = None):
+  def __init__(
+    self,
+    rule_id: str,
+    rule_name: str,
+    category: str,
+    subcategory: str,
+    passed: bool,
+    severity: Severity,
+    message: str,
+    guidance: str,
+    tile_location: Optional[Tuple[int, int]] = None,
+    actual_value: Any = None,
+    expected_value: Any = None,
+  ):
     self.rule_id = rule_id
     self.rule_name = rule_name
     self.category = category
@@ -63,7 +76,7 @@ class GuidanceResult:
       "guidance": self.guidance if not self.passed else "",
       "tile_location": self.tile_location,
       "actual_value": str(self.actual_value) if self.actual_value is not None else None,
-      "expected_value": str(self.expected_value) if self.expected_value is not None else None
+      "expected_value": str(self.expected_value) if self.expected_value is not None else None,
     }
 
 
@@ -94,10 +107,10 @@ class AIEGuidanceChecker:
   def _load_rules(self, rules_file: str) -> Dict[str, Dict]:
     """Load guidance rules from JSON file"""
     try:
-      with open(rules_file, 'r', encoding="utf-8") as f:
+      with open(rules_file, "r", encoding="utf-8") as f:
         data = json.load(f)
         # Convert list of rules to dict keyed by rule_id
-        return {rule['id']: rule for rule in data['rules']}
+        return {rule["id"]: rule for rule in data["rules"]}
     except FileNotFoundError:
       print(f"[WARNING] Guidance rules file not found: {rules_file}")
       return {}
@@ -106,8 +119,9 @@ class AIEGuidanceChecker:
       return {}
 
   # Evaluate a single guidance rule against actual hardware status value
-  def _evaluate_rule(self, rule: Dict, actual_value: Any, col = None,
-                     row = None, extra_params = None) -> GuidanceResult:
+  def _evaluate_rule(
+    self, rule: Dict, actual_value: Any, col=None, row=None, extra_params=None
+  ) -> GuidanceResult:
     """
     Evaluate a single rule against actual value
 
@@ -121,22 +135,22 @@ class AIEGuidanceChecker:
     Returns:
       GuidanceResult object
     """
-    threshold = rule['threshold']
-    operator = rule['operator']
-    value_type = rule['value_type']
+    threshold = rule["threshold"]
+    operator = rule["operator"]
+    value_type = rule["value_type"]
 
     # Convert actual_value to appropriate type
-    if value_type == 'int':
+    if value_type == "int":
       actual_value = int(actual_value) if actual_value is not None else 0
       threshold = int(threshold)
-    elif value_type == 'float':
+    elif value_type == "float":
       actual_value = float(actual_value) if actual_value is not None else 0.0
       threshold = float(threshold)
-    elif value_type == 'bool':
+    elif value_type == "bool":
       if isinstance(actual_value, bool):
         pass  # Already boolean
       elif isinstance(actual_value, str):
-        actual_value = actual_value.lower() in ('true', '1', 'enabled', 'yes')
+        actual_value = actual_value.lower() in ("true", "1", "enabled", "yes")
       else:
         actual_value = bool(actual_value)
       threshold = bool(threshold)
@@ -144,22 +158,22 @@ class AIEGuidanceChecker:
 
     # Evaluate based on operator
     passed = False
-    if operator == '==':
+    if operator == "==":
       passed = actual_value == threshold
-    elif operator == '!=':
+    elif operator == "!=":
       passed = actual_value != threshold
-    elif operator == '>':
+    elif operator == ">":
       passed = actual_value > threshold
-    elif operator == '>=':
+    elif operator == ">=":
       passed = actual_value >= threshold
-    elif operator == '<':
+    elif operator == "<":
       passed = actual_value < threshold
-    elif operator == '<=':
+    elif operator == "<=":
       passed = actual_value <= threshold
 
     # Build message with parameter substitution
-    message = rule['good_message'] if passed else rule['bad_message']
-    params = {'col': col, 'row': row, 'value': actual_value}
+    message = rule["good_message"] if passed else rule["bad_message"]
+    params = {"col": col, "row": row, "value": actual_value}
     if extra_params:
       params.update(extra_params)
 
@@ -169,21 +183,26 @@ class AIEGuidanceChecker:
       # If formatting fails, use message as-is
       pass
 
-    severity = Severity.ERROR if rule.get('severity', 'error') == 'error' else \
-               Severity.WARNING if rule.get('severity') == 'warning' else Severity.INFO
+    severity = (
+      Severity.ERROR
+      if rule.get("severity", "error") == "error"
+      else Severity.WARNING
+      if rule.get("severity") == "warning"
+      else Severity.INFO
+    )
 
     return GuidanceResult(
-      rule_id=rule['id'],
-      rule_name=rule['name'],
-      category=rule['category'],
-      subcategory=rule['subcategory'],
+      rule_id=rule["id"],
+      rule_name=rule["name"],
+      category=rule["category"],
+      subcategory=rule["subcategory"],
       passed=passed,
       severity=severity,
       message=message,
-      guidance=rule['guidance'],
+      guidance=rule["guidance"],
       tile_location=(col, row) if col is not None and row is not None else None,
       actual_value=actual_value,
-      expected_value=threshold
+      expected_value=threshold,
     )
 
   # Check AIE core tile status (enabled, PC, locks, error events)
@@ -197,7 +216,7 @@ class AIEGuidanceChecker:
     aie_tile_key = None
     # Find the AIE tile type key (may vary: 'aie_tile', 'AIE_TILE_T', etc.)
     for key in status_data.keys():
-      if 'aie' in key.lower() and 'tile' in key.lower():
+      if "aie" in key.lower() and "tile" in key.lower():
         aie_tile_key = key
         break
 
@@ -207,8 +226,8 @@ class AIEGuidanceChecker:
     tile_data = status_data[aie_tile_key]
 
     # Check CORE_STATUS
-    if 'CORE_STATUS' in tile_data:
-      for entry in tile_data['CORE_STATUS']:
+    if "CORE_STATUS" in tile_data:
+      for entry in tile_data["CORE_STATUS"]:
         _, col, row, status_val, __, parsed = entry
 
         # Parse status value to extract enabled, reset, running flags
@@ -216,55 +235,59 @@ class AIEGuidanceChecker:
         status_int = int(status_val, 16) if isinstance(status_val, str) else status_val
 
         # Check if core is enabled
-        if 'CORE_ENABLED' in self.rules:
+        if "CORE_ENABLED" in self.rules:
           enabled = bool(status_int & CORE_STATUS_ENABLED_MASK)
-          result = self._evaluate_rule(self.rules['CORE_ENABLED'], enabled, col, row)
+          result = self._evaluate_rule(self.rules["CORE_ENABLED"], enabled, col, row)
           self.results.append(result)
 
         # Check if core is in reset
-        if 'CORE_IN_RESET' in self.rules:
+        if "CORE_IN_RESET" in self.rules:
           in_reset = bool(status_int & CORE_STATUS_RESET_MASK)
-          result = self._evaluate_rule(self.rules['CORE_IN_RESET'], in_reset, col, row)
+          result = self._evaluate_rule(self.rules["CORE_IN_RESET"], in_reset, col, row)
           self.results.append(result)
 
         # Check if core is in lock stall - look for "Lock_Stall" in parsed status
-        if 'CORE_LOCK_STALL' in self.rules and parsed:
-          lock_stall = 'Lock_Stall' in parsed or 'LOCK_STALL' in parsed.upper()
-          result = self._evaluate_rule(self.rules['CORE_LOCK_STALL'], lock_stall, col, row)
+        if "CORE_LOCK_STALL" in self.rules and parsed:
+          lock_stall = "Lock_Stall" in parsed or "LOCK_STALL" in parsed.upper()
+          result = self._evaluate_rule(self.rules["CORE_LOCK_STALL"], lock_stall, col, row)
           self.results.append(result)
 
         # Check if core is in error halt - look for "Error_Halt" in parsed status
-        if 'CORE_ERROR_HALT' in self.rules and parsed:
-          error_halt = 'Error_Halt' in parsed or 'ERROR_HALT' in parsed.upper()
-          result = self._evaluate_rule(self.rules['CORE_ERROR_HALT'], error_halt, col, row)
+        if "CORE_ERROR_HALT" in self.rules and parsed:
+          error_halt = "Error_Halt" in parsed or "ERROR_HALT" in parsed.upper()
+          result = self._evaluate_rule(self.rules["CORE_ERROR_HALT"], error_halt, col, row)
           self.results.append(result)
 
     # Check lock overflows/underflows
-    if 'LOCK_OFL' in tile_data and 'LOCK_OVERFLOW' in self.rules:
-      for entry in tile_data['LOCK_OFL']:
+    if "LOCK_OFL" in tile_data and "LOCK_OVERFLOW" in self.rules:
+      for entry in tile_data["LOCK_OFL"]:
         _, col, row, value, __, parsed = entry
         overflow_count = int(value, 16) if isinstance(value, str) else value
         if overflow_count > 0:
-          result = self._evaluate_rule(self.rules['LOCK_OVERFLOW'], overflow_count, col, row)
+          result = self._evaluate_rule(self.rules["LOCK_OVERFLOW"], overflow_count, col, row)
           self.results.append(result)
 
-    if 'LOCK_UFL' in tile_data and 'LOCK_UNDERFLOW' in self.rules:
-      for entry in tile_data['LOCK_UFL']:
+    if "LOCK_UFL" in tile_data and "LOCK_UNDERFLOW" in self.rules:
+      for entry in tile_data["LOCK_UFL"]:
         _, col, row, value, __, parsed = entry
         underflow_count = int(value, 16) if isinstance(value, str) else value
         if underflow_count > 0:
-          result = self._evaluate_rule(self.rules['LOCK_UNDERFLOW'], underflow_count, col, row)
+          result = self._evaluate_rule(self.rules["LOCK_UNDERFLOW"], underflow_count, col, row)
           self.results.append(result)
 
     # Check event status for errors - only check registers defined in architecture
-    if 'EVENT_STATUS_ERRORS' in self.rules and self.aie_iface:
+    if "EVENT_STATUS_ERRORS" in self.rules and self.aie_iface:
       # Get the error event register names from architecture
       error_regs = [self.aie_iface.ERRORS_EVENT_REG]
-      if hasattr(self.aie_iface, 'ERRORS_EVENT_REG2'):
+      if hasattr(self.aie_iface, "ERRORS_EVENT_REG2"):
         error_regs.append(self.aie_iface.ERRORS_EVENT_REG2)
 
       # Get the specific error event strings to check for
-      error_strings = self.aie_iface.errors_event_strings if hasattr(self.aie_iface, 'errors_event_strings') else []
+      error_strings = (
+        self.aie_iface.errors_event_strings
+        if hasattr(self.aie_iface, "errors_event_strings")
+        else []
+      )
 
       # Check each error register
       for error_reg_name in error_regs:
@@ -284,14 +307,10 @@ class AIEGuidanceChecker:
               # Create custom message with specific errors
               error_list = ", ".join(errors_found)
               result = self._evaluate_rule(
-                self.rules['EVENT_STATUS_ERRORS'],
-                event_val,
-                col,
-                row,
-                {'errors': error_list}
+                self.rules["EVENT_STATUS_ERRORS"], event_val, col, row, {"errors": error_list}
               )
               # Override message to include specific errors
-              result.message = result.message.replace('Status: {value}', f'Errors: {error_list}')
+              result.message = result.message.replace("Status: {value}", f"Errors: {error_list}")
               self.results.append(result)
 
   # Check DMA channel status for activity and configuration
@@ -315,7 +334,7 @@ class AIEGuidanceChecker:
     """
     shim_tile_key = None
     for key in status_data.keys():
-      if 'shim' in key.lower() and 'tile' in key.lower():
+      if "shim" in key.lower() and "tile" in key.lower():
         shim_tile_key = key
         break
 
@@ -325,28 +344,36 @@ class AIEGuidanceChecker:
     tile_data = status_data[shim_tile_key]
 
     # Check microcontroller status
-    if 'UC_STATUS' in tile_data and 'UC_FIRMWARE_RUNNING' in self.rules:
-      for entry in tile_data['UC_STATUS']:
+    if "UC_STATUS" in tile_data and "UC_FIRMWARE_RUNNING" in self.rules:
+      for entry in tile_data["UC_STATUS"]:
         _, col, row, uc_data = entry
         # uc_data is list of (name, value) tuples
         fw_state = None
         for name, value in uc_data:
-          if 'FW_STATE' in name:
+          if "FW_STATE" in name:
             fw_state = value
             break
 
         if fw_state:
-          result = self._evaluate_rule(self.rules['UC_FIRMWARE_RUNNING'], fw_state, col, row)
+          result = self._evaluate_rule(self.rules["UC_FIRMWARE_RUNNING"], fw_state, col, row)
           self.results.append(result)
 
     # Check if shim DMA is configured
-    if ('dma_mm2s_status' in tile_data or 'dma_s2mm_status' in tile_data) and 'SHIM_DMA_CONFIGURED' in self.rules:
-      for col_row_pair in set([(e[1], e[2]) for section in ['dma_mm2s_status', 'dma_s2mm_status']
-                                if section in tile_data for e in tile_data[section]]):
+    if (
+      "dma_mm2s_status" in tile_data or "dma_s2mm_status" in tile_data
+    ) and "SHIM_DMA_CONFIGURED" in self.rules:
+      for col_row_pair in set(
+        [
+          (e[1], e[2])
+          for section in ["dma_mm2s_status", "dma_s2mm_status"]
+          if section in tile_data
+          for e in tile_data[section]
+        ]
+      ):
         col, row = col_row_pair
         # If we have DMA status entries, assume DMA is configured
         configured = True  # Simplified check
-        result = self._evaluate_rule(self.rules['SHIM_DMA_CONFIGURED'], configured, col, row)
+        result = self._evaluate_rule(self.rules["SHIM_DMA_CONFIGURED"], configured, col, row)
         self.results.append(result)
 
   # Run all guidance checks (core, DMA, shim) on collected status data
@@ -377,11 +404,11 @@ class AIEGuidanceChecker:
       Dictionary with counts of passed, errors, and warnings
     """
     summary = {
-      'total': len(self.results),
-      'passed': sum(1 for r in self.results if r.passed),
-      'errors': sum(1 for r in self.results if not r.passed and r.severity == Severity.ERROR),
-      'warnings': sum(1 for r in self.results if not r.passed and r.severity == Severity.WARNING),
-      'info': sum(1 for r in self.results if not r.passed and r.severity == Severity.INFO)
+      "total": len(self.results),
+      "passed": sum(1 for r in self.results if r.passed),
+      "errors": sum(1 for r in self.results if not r.passed and r.severity == Severity.ERROR),
+      "warnings": sum(1 for r in self.results if not r.passed and r.severity == Severity.WARNING),
+      "info": sum(1 for r in self.results if not r.passed and r.severity == Severity.INFO),
     }
     return summary
 
@@ -454,7 +481,9 @@ class AIEGuidanceChecker:
         if show_guidance and not result.passed:
           print(f"         | {'':10} | {'':35} | → {result.guidance}")
           if result.actual_value is not None:
-            print(f"         | {'':10} | {'':35} |   Actual: {result.actual_value}, Expected: {result.expected_value}")
+            print(
+              f"         | {'':10} | {'':35} |   Actual: {result.actual_value}, Expected: {result.expected_value}"
+            )
 
       print()
 
@@ -478,12 +507,9 @@ class AIEGuidanceChecker:
     Args:
       filename: Output filename
     """
-    output = {
-      'summary': self.get_summary(),
-      'results': [r.to_dict() for r in self.results]
-    }
+    output = {"summary": self.get_summary(), "results": [r.to_dict() for r in self.results]}
 
-    with open(filename, 'w', encoding="utf-8") as f:
+    with open(filename, "w", encoding="utf-8") as f:
       json.dump(output, f, indent=2)
 
     print(f"[INFO] Guidance results exported to {filename}")

@@ -9,11 +9,31 @@ import os
 import re
 import subprocess
 from importlib import resources
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from mldebug.extra.calltree import AIECallTree
 from mldebug.utils import LOGGER, is_aarch64, is_windows
+
+
+def run_bundled(cmd, **kwargs):
+  """
+  Run a bundled executable (cmd[0]) so that shared libraries shipped next to
+  it are resolvable at runtime. Linux and Windows only.
+
+  Any extra kwargs are forwarded to subprocess.check_output.
+  """
+  exe_dir = str(Path(cmd[0]).resolve().parent)
+  env = dict(kwargs.pop("env", os.environ))
+  if is_windows():
+    # Prepend the exe's dir to PATH so co-located DLLs are found.
+    env["PATH"] = exe_dir + os.pathsep + env.get("PATH", "")
+    with os.add_dll_directory(exe_dir):
+      return subprocess.check_output(cmd, env=env, **kwargs)
+  # Linux: point the loader at co-located .so files.
+  env["LD_LIBRARY_PATH"] = exe_dir + os.pathsep + env.get("LD_LIBRARY_PATH", "")
+  return subprocess.check_output(cmd, env=env, **kwargs)
+
 
 @dataclass
 class AIEFunction:
@@ -53,6 +73,30 @@ class GlobalVar:
   size: int
 
 
+@dataclass
+class StampInfo:
+  """
+  Per-stamp data parsed from the work directory.
+
+  One instance exists per per-batch stamp (S of them). Batch copies run the
+  same ELFs, so callers map a flat replica id (b*S + s) back to its stamp via
+  WorkDir.stamp(sid) rather than storing B*S duplicates.
+  """
+
+  # True when the stamp has reloadable ELFs (program-memory reload).
+  pm_reload_en: bool = False
+  # elf_name -> list[AIEFunction]
+  aie_functions: dict = field(default_factory=dict)
+  # elf partition -> list of flexml layer ids (only set when pm reload).
+  elf_flxmlid_maps: dict = field(default_factory=dict)
+  # list[GlobalVar] for lcpPing/lcpPong (None until first var is found).
+  globals: list = field(default_factory=list)
+  # Lock acquire instruction PC after layer execution (used for skip_iter).
+  post_layer_lock_acq_pc: int = 0
+  # list[(elf_name, lst_text)] captured during LLVM parsing.
+  lst_map: list = field(default_factory=list)
+
+
 def _parse_flexml_layer_id(objstr):
   """
   Parse a layer index from an object string using the current BE naming convention.
@@ -70,7 +114,7 @@ def _parse_flexml_layer_id(objstr):
   if m:
     return int(m[0])
   return -1
-  #raise RuntimeError(f"Unable to parse flexml layer id from {objstr}")
+  # raise RuntimeError(f"Unable to parse flexml layer id from {objstr}")
 
 
 class WorkDir:
@@ -78,7 +122,7 @@ class WorkDir:
   Abstraction for AIE Work Directory
   """
 
-  def __init__(self, aie_dir, peano, overlay, dump_lst=False):
+  def __init__(self, aie_dir, peano, overlay, arch_name, dump_lst=False):
     """
     Initialize the AIE Work Directory abstraction. Sets up internal state and parses functions.
     Args:
@@ -87,31 +131,31 @@ class WorkDir:
         overlay: Overlay object with get_stampids() and get_first_relative_core_tile().
         dump_lst (bool): Whether to dump LST files.
     """
-    num_stamps = len(overlay.get_stampids())
-
-    self.pm_reload_en = [False] * num_stamps
-    self.aie_functions = [None] * num_stamps
-    self.elf_flxmlid_maps = [None] * num_stamps
-    self.globals = [None] * num_stamps
     self.peano = peano
     self.aie_dir = aie_dir
-    self.dump_lst = dump_lst
-    # Lock acquire instruction PC after layer execution
-    # This pc can be used for skip_iter
-    self.post_layer_lock_acq_pcs = [0] * num_stamps
+    self.stamps_per_batch = overlay.get_stamps_per_batch()
+    self.stamps = [StampInfo() for _ in range(self.stamps_per_batch)]
 
-    self._stamp_lst_map = {}
-    for sid in range(num_stamps):
-      self._stamp_lst_map[sid] = []
+    self._initialize_functions(aie_dir, overlay, arch_name, dump_lst)
 
-    self._initialize_functions(aie_dir, overlay)
+  def stamp(self, sid):
+    """
+    Map a flat replica id (b*S + s) back to its per-batch StampInfo. Batch
+    copies have the same ELFs, so all replicas of stamp s see the same data.
+
+    Args:
+        sid (int): Flat replica id.
+    Returns:
+        StampInfo: The per-batch stamp info for this replica.
+    """
+    return self.stamps[sid % self.stamps_per_batch]
 
   def _check_for_lock_acq(self, line, sid, llvm):
     """
     find lock acq in base lst
     """
     if "acq" in line.lower():
-      self.post_layer_lock_acq_pcs[sid] = self._get_pc(line, llvm)
+      self.stamps[sid].post_layer_lock_acq_pc = self._get_pc(line, llvm)
 
   def _demangle(self, fstring):
     """
@@ -141,11 +185,13 @@ class WorkDir:
         row (int): Row of the target core tile.
         stampid (int): Stamp index into overlay.
     Side effects:
-        Updates self.elf_flxmlid_maps[stampid] to map ELF partitions to layers.
+        Updates self.stamps[stampid].elf_flxmlid_maps to map ELF partitions to layers.
     """
     elf_layer_map = {}
     # Elfs for different columns can be reloaded in same line so we have to create multiple groups
-    pattern = re.compile("reloadable elf for .*{?\\[col:" + f"{col}" + " row:" + f"{row}" + "\\]([0-9]+)(.+)")
+    pattern = re.compile(
+      "reloadable elf for .*{?\\[col:" + f"{col}" + " row:" + f"{row}" + "\\]([0-9]+)(.+)"
+    )
     with open(work_dir + "/ps/c_rts/aie_runtime_control.cpp", encoding="utf-8") as fd:
       for line in fd:
         match = pattern.search(line)
@@ -163,36 +209,44 @@ class WorkDir:
             if layeridx in elf_layer_map[par]:
               break
             elf_layer_map[par].append(layeridx)
-    self.elf_flxmlid_maps[stampid] = elf_layer_map
+    self.stamps[stampid].elf_flxmlid_maps = elf_layer_map
 
-  def _get_lst(self, elf_path, elf_name):
+  def _get_lst(self, elf_path, elf_name, arch_name, dump_lst):
     """
     Generate and fetch a disassembly listing (lst) for an ELF file using llvm-objdump.
 
     Args:
         elf_path (str): Path to the ELF binary.
         elf_name (str): Base ELF file name (stem).
+        arch_name (str): Target architecture name passed to llvm-objdump.
+        dump_lst (bool): Whether to write the output listing to disk.
 
     Returns:
         str: Decoded assembly listing as text.
     Side effects:
-        If self.dump_lst is True, writes the output listing to disk.
+        If dump_lst is True, writes the output listing to disk.
     """
     lst_data = ""
     exe = "llvm-objdump.elf"
-    archname = "aie2p"
     if is_windows():
       exe = "llvm-objdump.exe"
     elif is_aarch64():
       exe = "llvm-objdump.aarch64"
-      archname = "aie2ps"
     with resources.as_file(resources.files("mldebug") / "bin" / exe) as objdump_path:
-      lst = subprocess.check_output(
-        [str(objdump_path), "-d", "-z", "--no-show-raw-insn", f"--arch-name={archname}", "-C", elf_path]
+      lst = run_bundled(
+        [
+          str(objdump_path),
+          "-d",
+          "-z",
+          "--no-show-raw-insn",
+          f"--arch-name={arch_name}",
+          "-C",
+          elf_path,
+        ]
       )
       lst_data = lst.decode("utf-8")
 
-    if self.dump_lst:
+    if dump_lst:
       fname = elf_name + ".lst"
       print("Writing assembly listing to:", fname)
       with open(fname, "w", encoding="utf8") as fd:
@@ -220,6 +274,11 @@ class WorkDir:
     if token.isnumeric():
       return int(token)
     return 0
+
+  @staticmethod
+  def _is_llvm_insn_line(line):
+    """True for llvm-objdump instruction rows (skip headers and function labels)."""
+    return bool(re.match(r"\s+[0-9a-f]+:", line))
 
   def _find_next_pc(self, lines, from_line):
     """
@@ -259,52 +318,58 @@ class WorkDir:
         return False
     return True
 
-  def _initialize_functions(self, work_dir, overlay):
+  def _initialize_functions(self, work_dir, overlay, arch_name, dump_lst):
     """
     Parse work directory and its ELF files to extract function ranges, tail calls,
     global variables, and layer/partition info.
 
+    For batched + stamped designs we only parse one batch's worth of stamps
+    (S replicas). The same ELF binaries are loaded into the additional batch
+    columns, so the PCs and global addresses are identical; callers reach the
+    batch copies through self.stamp(sid) (sid % S).
+
     Args:
         work_dir (str): Path to the AIE work directory.
         overlay: Overlay object for tile mapping.
+        arch_name (str): Target architecture name passed to llvm-objdump.
+        dump_lst (bool): Whether to write disassembly listings to disk.
     Side effects:
-        Populates aie_functions, pm_reload_en, globals, elf_flxmlid_maps.
+        Populates self.stamps[s] for each per-batch stamp.
     """
     print("[INFO] Try to detect Work Directory ...")
     full_path = Path(work_dir + "/aie/")
     if not Path.exists(full_path):
       LOGGER.log(f"[INFO] Work directory {full_path} does not exist.")
       return
-    for stampid in overlay.get_stampids():
-      col, row = overlay.get_first_relative_core_tile(stampid)
+    for s in range(self.stamps_per_batch):
+      col, row = overlay.get_first_relative_core_tile(s)
       core_name = f"{col}_{row}"
       print(f"Core: {core_name}")
       plist = []
       for elf in full_path.glob(f"{core_name}*"):
         plist.append(elf)
       if len(plist) > 1:
-        self.pm_reload_en[stampid] = True
-        self._parse_aie_runtime_control(work_dir, col, row, stampid)
-      self.aie_functions[stampid] = {}
+        self.stamps[s].pm_reload_en = True
+        self._parse_aie_runtime_control(work_dir, col, row, s)
 
       # Parse LST
       for p in plist:
         LOGGER.verbose_print(f"[INFO] Process: {p}")
         if not self.peano:
-          success = self._parse_lst_chess(p, stampid)
+          success = self._parse_lst_chess(p, s)
           if not success:
             print(f"[WARNING] Failed to parse LST for {p}. Assuming peano compiler.")
             self.peano = True
         if self.peano:
-          self._parse_lst_llvm(p, stampid)
+          self._parse_lst_llvm(p, s, arch_name, dump_lst)
 
       # Parse map file to find LCP
       # Only base map file has global variables
       first_elf = full_path / core_name
       if self.peano:
-        self._extract_globals_llvm(first_elf, stampid)
+        self._extract_globals_llvm(first_elf, s)
       else:
-        self._extract_globals_chess(first_elf, stampid)
+        self._extract_globals_chess(first_elf, s)
 
   def _parse_lst_chess(self, elf, stampid):
     """
@@ -318,7 +383,7 @@ class WorkDir:
     Returns:
         bool: True if parsed successfully, False if the LST file doesn't exist.
     Side effects:
-        Populates self.aie_functions[stampid][elf_name] with AIEFunction objects.
+        Populates self.stamps[stampid].aie_functions[elf_name] with AIEFunction objects.
     """
     elf_name = elf.stem
     lst_file = f"{elf}/Release/{elf_name}.lst"
@@ -327,7 +392,7 @@ class WorkDir:
 
     is_base = "reloadable" not in elf_name
 
-    self.aie_functions[stampid][elf_name] = []
+    self.stamps[stampid].aie_functions[elf_name] = []
     with open(lst_file, encoding="utf-8") as fd:
       lines = fd.read().split("\n")
     count = len(lines)
@@ -377,7 +442,7 @@ class WorkDir:
             i -= 1
             break
           i += 1
-        self.aie_functions[stampid][elf_name].append(
+        self.stamps[stampid].aie_functions[elf_name].append(
           AIEFunction(demangled, start_pc, end_pc, final_lock_release_pc, tail_call)
         )
       i += 1
@@ -427,9 +492,9 @@ class WorkDir:
 
     Args:
         elf (Path): Path object of the ELF directory.
-        sid (int): Index into self.globals for this stamp.
+        sid (int): Index into self.stamps for this stamp.
     Side effects:
-        Appends GlobalVar objects to self.globals[sid] for lcpPing/lcpPong if present.
+        Appends GlobalVar objects to self.stamps[sid].globals for lcpPing/lcpPong if present.
     """
     mapfile_path = f"{elf}/Release/{elf.stem}.map"
     if not Path(mapfile_path).exists():
@@ -438,22 +503,26 @@ class WorkDir:
 
     def _extract_var(lines, var_name):
       """
-      Find and add a global variable by name from the given lines to self.globals[sid].
+      Find and add a global variable by name from the given lines to self.stamps[sid].globals.
       Args:
           lines (List[str]): Lines of map file.
           var_name (str): Variable name to search for.
       Side effects:
-          Updates self.globals[sid].
+          Updates self.stamps[sid].globals.
       """
-      if not self.globals[sid]:
-        self.globals[sid] = []
+      if not self.stamps[sid].globals:
+        self.stamps[sid].globals = []
       for line in lines:
         if var_name in line:
           tokens = line.split()
           if len(tokens) >= 3:
             try:
-              self.globals[sid].append(GlobalVar(var_name, int(tokens[0], base=16), int(tokens[2], base=16)))
-              LOGGER.verbose_print(f"[INFO] Found global variable: {var_name} at {tokens[0]} size {tokens[2]}")
+              self.stamps[sid].globals.append(
+                GlobalVar(var_name, int(tokens[0], base=16), int(tokens[2], base=16))
+              )
+              LOGGER.verbose_print(
+                f"[INFO] Found global variable: {var_name} at {tokens[0]} size {tokens[2]}"
+              )
             except ValueError:
               pass  # Ignore lines that cannot be parsed
             break
@@ -470,9 +539,9 @@ class WorkDir:
 
     Args:
         elf (Path): Path object of the ELF directory.
-        sid (int): Index into self.globals for this stamp.
+        sid (int): Index into self.stamps for this stamp.
     Side effects:
-        Appends GlobalVar objects to self.globals[sid] for lcpPing/lcpPong if present.
+        Appends GlobalVar objects to self.stamps[sid].globals for lcpPing/lcpPong if present.
     """
     mapfile_path = f"{elf}/Release/{elf.stem}.map"
     if not Path(mapfile_path).exists():
@@ -481,15 +550,15 @@ class WorkDir:
 
     def _extract_var(lines, var_name):
       """
-      Find and add a global variable by name from the given lines to self.globals[sid].
+      Find and add a global variable by name from the given lines to self.stamps[sid].globals.
       Args:
           lines (List[str]): Lines of map file.
           var_name (str): Variable name to search for.
       Side effects:
-          Updates self.globals[sid].
+          Updates self.stamps[sid].globals.
       """
-      if not self.globals[sid]:
-        self.globals[sid] = []
+      if not self.stamps[sid].globals:
+        self.stamps[sid].globals = []
       for line in lines:
         if var_name in line:
           tokens = line.split()[0].split("..")
@@ -498,8 +567,10 @@ class WorkDir:
               start_addr = int(tokens[0], base=16)
               end_addr = int(tokens[1], base=16)
               size = end_addr - start_addr + 1
-              self.globals[sid].append(GlobalVar(var_name, start_addr, size))
-              LOGGER.verbose_print(f"[INFO] Found global variable: {var_name} at {start_addr} size {size}")
+              self.stamps[sid].globals.append(GlobalVar(var_name, start_addr, size))
+              LOGGER.verbose_print(
+                f"[INFO] Found global variable: {var_name} at {start_addr} size {size}"
+              )
             except ValueError:
               pass  # Ignore lines that cannot be parsed
             break
@@ -509,7 +580,7 @@ class WorkDir:
       _extract_var(lines, "lcpPing")
       _extract_var(lines, "lcpPong")
 
-  def _parse_lst_llvm(self, elf, stampid):
+  def _parse_lst_llvm(self, elf, stampid, arch_name, dump_lst):
     """
     Parse LLVM-based LST disassembly to extract functions, boundaries,
     final lock release instructions, and tail call status.
@@ -517,19 +588,21 @@ class WorkDir:
     Args:
         elf (Path): Path object for the ELF file directory.
         stampid (int): Index into aie_functions.
+        arch_name (str): Target architecture name passed to llvm-objdump.
+        dump_lst (bool): Whether to write disassembly listings to disk.
     Side effects:
-        Populates self.aie_functions[stampid][elf_name] with AIEFunction objects.
+        Populates self.stamps[stampid].aie_functions[elf_name] with AIEFunction objects.
     """
     elf_name = elf.stem
     elf_path = f"{elf}/Release/{elf.stem}"
-    data = self._get_lst(elf_path, elf_name)
-    self._stamp_lst_map[stampid].append((elf_name, self._get_lst(elf_path, elf_name)))
+    data = self._get_lst(elf_path, elf_name, arch_name, dump_lst)
+    self.stamps[stampid].lst_map.append((elf_name, data))
     lines = data.split("\n")
 
     is_base = "reloadable" not in elf_name
 
-    self.aie_functions[stampid][elf_name] = []
-    flist = self.aie_functions[stampid][elf_name]
+    self.stamps[stampid].aie_functions[elf_name] = []
+    flist = self.stamps[stampid].aie_functions[elf_name]
     in_func = None
     for i, line in enumerate(lines):
       # function call
@@ -547,17 +620,18 @@ class WorkDir:
         function_name = self.parse_function_sig_llvm(m_fc.group(2))
         start_pc = int(m_fc.group(1), base=16)
         in_func = AIEFunction(function_name, start_pc, 0, 0, False)
-      # end pc
-      elif "ret" in line:
+      # end pc — match insn lines only; "ret" in path text (e.g. pretrained) is not an insn
+      elif self._is_llvm_insn_line(line) and re.search(r"\bret\b", line):
         # functions with multiple returns
         if not in_func:
-          flist[-1].end_pc = self._get_pc(line, llvm=True)
+          if flist:
+            flist[-1].end_pc = self._get_pc(line, llvm=True)
         else:
           in_func.end_pc = self._get_pc(line, llvm=True)
           flist.append(in_func)
           in_func = None
       # lock rel
-      elif "rel" in line and "rel." not in line:
+      elif self._is_llvm_insn_line(line) and re.search(r"\brel\b", line) and "rel." not in line:
         # Account for text outside function
         if not in_func:
           continue
@@ -578,7 +652,7 @@ class WorkDir:
         List[str]: List of "<elf>:<funcname>" strings whose PC range covers the input.
     """
     funclist = []
-    fmap = self.aie_functions[0]
+    fmap = self.stamps[0].aie_functions
     if fmap:
       for elf, flist in fmap.items():
         for func in flist:
@@ -596,21 +670,23 @@ class WorkDir:
     Side effects:
         Prints formatted function info to stdout.
     """
-    if all(x is None for x in self.aie_functions):
+    if all(not si.aie_functions for si in self.stamps):
       print("No functions found in design. Please specify aiedir option.")
       return
 
     sep = "--------------------------------------------"
 
     if elf_id:
-      for fmap in self.aie_functions:
+      for si in self.stamps:
+        fmap = si.aie_functions
         if elf_id in fmap:
           print(f"{sep}\nFunctions in {elf_id}\n{sep}")
           for f in fmap[elf_id]:
             print(f)
           return
 
-    for stamp, fmap in enumerate(self.aie_functions):
+    for stamp, si in enumerate(self.stamps):
+      fmap = si.aie_functions
       if not fmap:
         continue
       print(f"{sep}\nElfs in Stamp: {stamp}\n{sep}")
@@ -628,10 +704,10 @@ class WorkDir:
     Args:
         sid (int): Stamp index.
     """
-    if sid not in self._stamp_lst_map:
-      LOGGER.log(f"[ERROR] Stamp {sid} not found in _stamp_lst_map.")
+    if not 0 <= sid < self.stamps_per_batch:
+      LOGGER.log(f"[ERROR] Stamp {sid} out of range.")
       return
-    for elf_id, lst_content in self._stamp_lst_map[sid]:
+    for elf_id, lst_content in self.stamps[sid].lst_map:
       LOGGER.log(f"[INFO] Printing calltree for {elf_id}\n")
       tree = AIECallTree.from_string(lst_content)
       tree.print_calltree()
@@ -644,10 +720,10 @@ class WorkDir:
     Args:
         sid (int): Stamp index.
     """
-    if sid not in self._stamp_lst_map:
-      LOGGER.log(f"[ERROR] Stamp {sid} not found in _stamp_lst_map.")
+    if not 0 <= sid < self.stamps_per_batch:
+      LOGGER.log(f"[ERROR] Stamp {sid} out of range.")
       return
-    for elf_id, lst_content in self._stamp_lst_map[sid]:
+    for elf_id, lst_content in self.stamps[sid].lst_map:
       with open(f"{elf_id}.lst", "w", encoding="utf-8") as fd:
         fd.write(lst_content)
       LOGGER.log(f"[INFO] LST file dumped to {elf_id}.lst")

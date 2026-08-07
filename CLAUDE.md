@@ -51,19 +51,37 @@ secondary counters (`depth_iter`, `buffer_iter`, `super_iter`,
 L2->L3 OFM spills, and weight reloads happen. Together these form the
 "layer control parameters" (`Lcp`).
 
-**Stamp.** A spatial replica of a small AIE region. A 4x4 design
-"stamped" twice (`-o 2x4x4`) runs the same kernels in parallel on two
-side-by-side 4x4 regions. Each stamp gets its own backend connection and
-its own `AIEUtil` helper. The debugger schedules and breakpoints them
-independently.
+**Stamp.** A spatial replica of a small AIE region within one batch.
+Different stamps in a batch may run *different* kernels (and may skip
+layers entirely - higher-indexed stamps participate in a subset of
+layers). Each replica gets its own backend connection and its own
+`AIEUtil` helper.
 
-**Batch.** Conceptually the same as stamping but used for data-parallel
-inference; multiple input samples processed in parallel by replicated
-hardware. Detected from `device_batch_size` in `buffer_info.json`.
+**Batch.** A data-parallel copy of the whole per-batch stamp set.
+Batches run the *same* kernels on different input samples, so they
+share PCs/ELFs/buffers and the debugger only resolves metadata once
+per per-batch stamp and mirrors it across batches. Taken from
+`device_batch_size` in `buffer_info.json`.
 
-**Overlay.** The shape of the AIE region in use, written `NxCxR`
-(stamps x columns x rows). Default `1x4x4`. Each stamp i occupies
-columns `[i*C, (i+1)*C)`.
+**Overlay (4D).** The shape of the AIE region in use is `BxSxCxR`:
+- `B` = number of batches (data-parallel copies)
+- `S` = stamps per batch (spatial replicas inside one batch)
+- `C` = columns per stamp
+- `R` = rows per stamp
+
+Replicas are packed stamp-inner along columns: the flat replica id
+`sid = b*S + s` occupies columns `[sid*C, (sid+1)*C)`. The rest of
+the code refers to that flat id as "stamp id" / "sid". `Overlay`
+helpers: `get_batch_count()`, `get_stamps_per_batch()`,
+`get_stampcount()` (= total replicas = B*S), `replica_to_batch(sid)`,
+`replica_to_stamp(sid)`, `is_leftmost_in_batch(sid)` (true when
+`sid % S == 0`; these replicas are the per-batch stamp 0 and always
+participate in every layer).
+
+`buffer_info.json` stores this as `.meta.layout = [stamps, R, C]`,
+`.meta.device_batch_size = B`, `.meta.max_stamps_used = S` (with
+fallback to `max(no_of_stamps)` across layers). The `-o` CLI override
+parses `SxCxR` (or `CxR`) and forces `B=1`.
 
 **PM reload.** The AIE has limited program memory; large designs split
 their code across multiple ELFs and reload program memory between layer
@@ -138,8 +156,9 @@ Common runtime flags (`-f`):
   and the file format.
 - `skip_iter` -- use a perf-counter trick to fast-forward iterations
   instead of polling per iteration.
-- `multistamp` -- actually drive every stamp; default is to collapse to
-  stamp 0 for sanity.
+- `multistamp` -- actually drive every replica (all batches and all
+  per-batch stamps); default is to collapse to a single replica
+  (B=S=1) for sanity.
 
 ### Testing
 
@@ -235,20 +254,26 @@ This is where the real work happens. The two methods to read first are
 
 - `common_init()` runs once before any layer. If the user did not pass
   the `multistamp` flag, the runner collapses the design to a single
-  stamp here -- it edits the layer/overlay/impls lists in place so the
-  rest of the system simply sees a 1-stamp design. This is the safest
-  default because multi-stamp scheduling is intricate.
+  replica (`B=S=1`) here -- it edits the layer/overlay/impls lists in
+  place so the rest of the system simply sees a 1-replica design.
+  This is the safest default because multi-stamp scheduling is
+  intricate.
 - `schedule_layer_start()` arms the start (and optionally end) PC
-  breakpoint on every stamp. When PM reload is expected it also
-  installs a combo-event that survives the reload, *and* it may arm a
-  future stamp's breakpoint *early* -- before the outer loop reaches
-  the layer that stamp actually runs. This is necessary because if a
-  stamp does not participate in the current layer, releasing it
-  without a valid breakpoint would let it free-run past its real
-  target. The "PM RELOAD on stamp X" log line is when arming happens,
-  not when the reload physically occurs.
-- `run_layer()` runs one layer to completion across all stamps using a
-  thread pool, one worker per stamp.
+  breakpoint on every stamp. Per-batch leftmost replicas (where
+  `sid % S == 0`) always participate in `next_layer`; other replicas
+  may need their breakpoint armed for a *future* layer they actually
+  run. When PM reload is expected it also installs a combo-event that
+  survives the reload, *and* it may arm a future stamp's breakpoint
+  *early* -- before the outer loop reaches the layer that stamp
+  actually runs. This is necessary because if a stamp does not
+  participate in the current layer, releasing it without a valid
+  breakpoint would let it free-run past its real target. The "PM
+  RELOAD on stamp X" log line is when arming happens, not when the
+  reload physically occurs. The list of replicas that actually
+  breakpoint on `next_layer` is stashed in `state.stamps_to_run` for
+  `run_layer` to consume.
+- `run_layer()` runs one layer to completion across the replicas in
+  `state.stamps_to_run` using a thread pool, one worker per replica.
 - Inside a layer the runner alternates: continue, poll for breakpoint,
   identify whether we hit start or end PC, dump the appropriate
   buffers, increment the iteration counter, repeat.
@@ -277,17 +302,27 @@ through.
 
 A small holder for "where are we now": current layer index, current
 iteration, ping/pong toggle for OFM dumps, list of pending manual
-breakpoints, and per-stamp PM-reload flags. `update_layer()` is the
-generator the runner iterates to advance through the design.
+breakpoints, per-replica PM-reload flags, and `stamps_per_batch` (S)
+so `get_next_layer_for_stamp(sid)` can map a flat replica id to its
+per-batch stamp index and gate against each layer's
+`stamps_per_batch`. `stamps_to_run` is set by `schedule_layer_start`
+and consumed by `run_layer`. `update_layer()` is the generator the
+runner iterates to advance through the design.
 
 ### `layer_info.py` -- buffer / layer metadata
 
 Parses `buffer_info.json` and produces the `Layer` and `Buffer` objects
 the rest of the system uses.
 
-- A `Layer` knows its kernels (one `Stamp` per AIE replica), its
-  input/output/weight buffers, its L3 buffers, and its iteration
-  counts (`Lcp`).
+- A `Layer` knows its kernels, its input/output/weight buffers, its
+  L3 buffers, and its iteration counts (`Lcp`). `layer.stamps` is the
+  *per-batch* stamp list (length `layer.stamps_per_batch`, which may
+  be less than the overlay's S - higher-indexed stamps skip this
+  layer). Batches share kernel/PC metadata, so callers translate a
+  flat replica id with `layer.get_stamp(sid)` (returns
+  `stamps[sid % S]`, the per-batch stamp index) and gate participation
+  with `layer.runs_replica(sid)` (false when this layer's
+  `stamps_per_batch` is smaller, e.g. TG layers).
 - A `Buffer` is the user-level concept (one IFM, one OFM, one weight
   set). Internally it holds an `L1Buffer` (ping/pong) and a list of
   `L2Buffer` chunks. Buffers larger than the memory-tile size are
@@ -321,6 +356,10 @@ preceding lines and skips those.
 
 Owns the on-disk layout and the actual reads. Files land under
 `<output_dir>/batch<N>/layer_<order>/<buffer_type>/<col>_<row>/`.
+The batch/stamp coordinates come from
+`overlay.replica_to_batch(sid)` and `overlay.replica_to_stamp(sid)`,
+so an `sid` always maps to one `batch<N>` directory and one
+`stamp<S>` suffix on the L2 dump filename.
 
 Binary format: an 8-byte little-endian length header followed by the
 raw 32-bit words. With `text_dump` the data is written as ASCII hex
@@ -374,10 +413,15 @@ Two non-obvious pieces:
 
 ### `aie_overlay.py` -- overlay geometry
 
-Parses `NxCxR` from `-o` (or the layout in `buffer_info.json`, which
-is stored as `[stamps, nrow, ncol]` rather than `NxCxR`) and builds
-the list of `(col, row)` tiles per stamp. Methods like `get_tiles`
-filter that list by tile type, with the AIE row offset already added.
+Holds the 4D `(B, S, C, R)` layout and builds the list of `(col, row)`
+tiles for each flat replica id `sid = b*S + s`. Layout is supplied
+either from `buffer_info.json` (`[stamps, R, C]` plus
+`device_batch_size` and `max_stamps_used`) or parsed from the `-o`
+CLI flag (`SxCxR` or `CxR`, forces `B=1`). `get_tiles` filters by
+tile type with the AIE row offset already added. Methods used by the
+rest of the system: `get_stampcount` (total replicas, B*S),
+`get_batch_count`, `get_stamps_per_batch`, `get_stampwidth` (C),
+`replica_to_batch`, `replica_to_stamp`, `is_leftmost_in_batch`.
 
 ### `arch/` -- per-device definitions
 
@@ -536,7 +580,8 @@ Before implementing:
 - No "flexibility" or "configurability" that wasn't requested.
 - No error handling for impossible scenarios.
 - If you write 200 lines and it could be 50, rewrite it.
-- Try to keep docstrings short to medium length.
+- Keep docstrings short - ideally 1-2 lines. If possible, add small one line comments interspersed
+  throughout rather than big chunks of comments.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
