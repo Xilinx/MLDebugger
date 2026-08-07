@@ -277,6 +277,18 @@ class Layer:
       return
 
     n_stamps = info.get("no_of_stamps")
+    # buffer_info's no_of_stamps is sometimes wrong (a core can be listed with
+    # an empty kernel_name). The true count is how many stamps actually run a
+    # kernel per the mladf report; prefer it and warn on a disagreement.
+    if mladf_report:
+      true_n = mladf_report.get_running_stamp_count(self.layer_order, num_stamps)
+      if true_n:
+        if n_stamps and true_n != n_stamps:
+          LOGGER.log(
+            f"[WARNING] Layer {self.layer_order}: buffer_info no_of_stamps={n_stamps} "
+            f"disagrees with mladf ({true_n}); using {true_n}."
+          )
+        n_stamps = true_n
     if n_stamps and n_stamps < num_stamps:
       num_stamps = n_stamps
 

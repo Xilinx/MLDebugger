@@ -439,7 +439,11 @@ class BatchRunner:
         if not res:
           self.state.error = True
 
-    # Unhalt right replicas that have no remaining future layer
+    # Unhalt right replicas that have no remaining future layer. Clear their
+    # breakpoints and disable PC-halt first; otherwise continue_aie() only
+    # advances one iteration before the core re-halts at its still-armed
+    # start_pc, leaving the replica stuck (and blocking other stamps' PM
+    # reload, which needs every core to run out).
     overlay = self.design_info.overlay
     total_replicas = len(self.state.pm_reload)
     if total_replicas > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):
@@ -447,6 +451,9 @@ class BatchRunner:
         if overlay.is_leftmost_in_batch(sid):
           continue
         if not self.state.get_next_layer_for_stamp(sid, idx=1):
+          self.impls[sid].clear_pc_breakpoint(0)
+          self.impls[sid].clear_pc_breakpoint(1)
+          self.impls[sid].disable_pc_halt()
           self.impls[sid].continue_aie()
 
     if self.state.error:

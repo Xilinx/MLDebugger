@@ -50,6 +50,26 @@ class MladfReport:
     aiec_layer_keys = self.bi_to_m2.get(bilo, [])
     return [self.m2_layers[k] for k in aiec_layer_keys]
 
+  def get_running_stamp_count(self, bilo, max_stamps):
+    """
+    True number of stamps that actually run a kernel for a buffer_info layer.
+
+    A stamp `sid` runs the layer only if its leftmost core (`sid*cps`_0) has a
+    NON-EMPTY kernel_name in the mladf core_information. A core may be listed
+    (its ELF is loaded) with an empty kernel_name, meaning it does not run the
+    layer -- so mere core presence over-counts. Assumes stamps are contiguous
+    from 0. Returns 0 when the layer has no mladf mapping.
+    """
+    count = 0
+    for sid in range(max_stamps):
+      core = f"{sid * self.cps}_0"
+      for lyr in self.get_aiec_layers_by_bilo(bilo):
+        ci = lyr.get("core_information", {})
+        if core in ci and ci[core].get("kernel_name", ""):
+          count += 1
+          break
+    return count
+
   def get_exec_order_for_bilo(self, bilo):
     """
     True execution order (mladf `layer_id`) for a buffer_info layer_order.
