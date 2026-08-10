@@ -238,7 +238,17 @@ class Layer:
   Contains all buffer, iteration, and kernel (stamp) mapping information.
   """
 
-  def __init__(self, info, size_shift, version, aie_iface, num_stamps, mladf_report, num_batches=1):
+  def __init__(
+    self,
+    info,
+    size_shift,
+    version,
+    aie_iface,
+    num_stamps,
+    mladf_report,
+    num_batches=1,
+    device_batch_size=1,
+  ):
     """
     Initialize a Layer object using given metadata, populating buffer and kernel/stamp lists.
 
@@ -251,6 +261,8 @@ class Layer:
       mladf_report: Optional MladfReport for templated-graph layers.
       num_batches (int): Number of batches (B from BxSxCxR overlay). Each
         batch is a data-parallel copy of the per-batch stamps; defaults to 1.
+      device_batch_size (int): buffer_info's device_batch_size, before any
+        single-replica collapse. Gates the mladf stamp-count correction.
     """
     self.flexml_ids = []
     self.l3_ifm_buffers = []
@@ -277,18 +289,17 @@ class Layer:
       return
 
     n_stamps = info.get("no_of_stamps")
-    # buffer_info's no_of_stamps is sometimes wrong (a core can be listed with
-    # an empty kernel_name). The true count is how many stamps actually run a
-    # kernel per the mladf report; prefer it and warn on a disagreement.
-    if mladf_report:
+    # buffer_info's no_of_stamps is sometimes wrong; mladf is authoritative,
+    # but it details only one batch replica so it is unusable when B > 1.
+    if mladf_report and device_batch_size == 1:
+      # None or 0 means mladf could not answer; fall back to buffer_info.
       true_n = mladf_report.get_running_stamp_count(self.layer_order, num_stamps)
-      if true_n:
-        if n_stamps and true_n != n_stamps:
-          LOGGER.log(
-            f"[WARNING] Layer {self.layer_order}: buffer_info no_of_stamps={n_stamps} "
-            f"disagrees with mladf ({true_n}); using {true_n}."
-          )
-        n_stamps = true_n
+      if true_n and n_stamps and true_n != n_stamps:
+        LOGGER.log(
+          f"[WARNING] Layer {self.layer_order}: buffer_info no_of_stamps={n_stamps} "
+          f"disagrees with mladf ({true_n}); using {true_n}."
+        )
+      n_stamps = true_n or n_stamps
     if n_stamps and n_stamps < num_stamps:
       num_stamps = n_stamps
 
@@ -892,27 +903,22 @@ class LayerInfo:
     for entry in raw_layers:
       info = entry[1]
       layer = Layer(
-        info, size_shift, version, aie_iface, num_stamps, self.mladf_report, num_batches=num_batches
+        info,
+        size_shift,
+        version,
+        aie_iface,
+        num_stamps,
+        self.mladf_report,
+        num_batches=num_batches,
+        device_batch_size=self.layout[0],
       )
       self.layers.append(layer)
     self._reorder_layers_by_execution()
 
   def _reorder_layers_by_execution(self):
     """
-    Reorder layers into true execution order using the mladf report.
-
-    buffer_info `layer_order` is the MLIR/DAG index; the aiecompiler backend
-    reschedules layers (notably templated-graph layers) into a different
-    execution / PM-reload order. The mladf `layer_id` captures that real
-    order, so each layer is translated to its `layer_id` (via the existing
-    parent-graph map) and stable-sorted on that single scale. buffer_info
-    order is only the lookup key / tie-break -- the two numberings are never
-    compared numerically.
-
-    A TG layer with no mladf mapping is disabled (dropped later) with a
-    warning; a non-TG layer with no mapping is anchored to its previous
-    neighbour so it keeps its buffer_info position. Non-TG layers should
-    already be in execution order, so a disagreement is flagged.
+    Stable-sort layers into true execution order (mladf `layer_id`), which the
+    backend reschedules away from buffer_info's MLIR/DAG `layer_order`.
     """
     if not self.mladf_report:
       return

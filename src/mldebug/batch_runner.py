@@ -49,6 +49,8 @@ class BatchRunner:
     self.aie_utls = aie_utls
     self.dumper = dumper
     self.status_handle = status_handle
+    # Execution position of --exit_at_layer; resolved in common_init.
+    self.exit_at_index = None
 
   # ------------------------------------------------------------------ #
   # Stamp scheduling
@@ -66,6 +68,16 @@ class BatchRunner:
 
     if self.args.run_flags.skip_iter:
       LOGGER.log("[INFO] All iterations will be skipped for this run.")
+
+    # Resolve once: layer_order is not the execution order, so -e is matched
+    # against the target's position in the execution list.
+    if self.args.exit_at_layer is not None:
+      self.exit_at_index = self.state.exec_index(self.args.exit_at_layer)
+      if self.exit_at_index is None:
+        LOGGER.log(
+          f"[WARNING] Layer {self.args.exit_at_layer} is not in the execution list; "
+          "the run will not exit early."
+        )
 
   def set_pc_breakpoint(self, pc, slot, sid=0):
     """
@@ -328,7 +340,7 @@ class BatchRunner:
     if self.args.interactive:
       return
 
-    if self.args.exit_at_layer and layer.layer_order >= self.args.exit_at_layer:
+    if self.exit_at_index is not None and self.state.current_layer >= self.exit_at_index:
       LOGGER.log(f"[INFO] Exiting debugger at Layer: {layer.layer_order}")
       self._write_run_summary("SUCCESS")
       sys.exit(0)
@@ -439,11 +451,8 @@ class BatchRunner:
         if not res:
           self.state.error = True
 
-    # Unhalt right replicas that have no remaining future layer. Clear their
-    # breakpoints and disable PC-halt first; otherwise continue_aie() only
-    # advances one iteration before the core re-halts at its still-armed
-    # start_pc, leaving the replica stuck (and blocking other stamps' PM
-    # reload, which needs every core to run out).
+    # Unhalt replicas with no remaining future layer. Breakpoints must be
+    # cleared first, or the core re-halts at its still-armed start_pc.
     overlay = self.design_info.overlay
     total_replicas = len(self.state.pm_reload)
     if total_replicas > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):

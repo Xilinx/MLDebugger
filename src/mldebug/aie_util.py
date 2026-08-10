@@ -185,12 +185,8 @@ class AIEUtil:
     if self._is_test_mode() or count == 0:
       return True
 
-    # The last layer finishes without acquiring a next-layer lock, so there is
-    # no lock-acquire PC to break on. Clear this stamp's breakpoints and stop
-    # halting on PC events, otherwise continuing would only advance one
-    # iteration before re-halting at the still-armed layer start_pc; the core
-    # must run all remaining iterations out to Core_Done so it releases its
-    # locks / program memory for the other stamps' PM reload.
+    # No next-layer lock to break on: run the core out to Core_Done so it
+    # releases its locks / program memory for the other stamps' PM reload.
     if is_last_layer:
       self.impl.clear_pc_breakpoint(0)
       self.impl.clear_pc_breakpoint(1)
