@@ -49,6 +49,8 @@ class BatchRunner:
     self.aie_utls = aie_utls
     self.dumper = dumper
     self.status_handle = status_handle
+    # Execution position of --exit_at_layer; resolved in common_init.
+    self.exit_at_index = None
 
   # ------------------------------------------------------------------ #
   # Stamp scheduling
@@ -66,6 +68,16 @@ class BatchRunner:
 
     if self.args.run_flags.skip_iter:
       LOGGER.log("[INFO] All iterations will be skipped for this run.")
+
+    # Resolve once: layer_order is not the execution order, so -e is matched
+    # against the target's position in the execution list.
+    if self.args.exit_at_layer is not None:
+      self.exit_at_index = self.state.exec_index(self.args.exit_at_layer)
+      if self.exit_at_index is None:
+        LOGGER.log(
+          f"[WARNING] Layer {self.args.exit_at_layer} is not in the execution list; "
+          "the run will not exit early."
+        )
 
   def set_pc_breakpoint(self, pc, slot, sid=0):
     """
@@ -328,7 +340,7 @@ class BatchRunner:
     if self.args.interactive:
       return
 
-    if self.args.exit_at_layer and layer.layer_order >= self.args.exit_at_layer:
+    if self.exit_at_index is not None and self.state.current_layer >= self.exit_at_index:
       LOGGER.log(f"[INFO] Exiting debugger at Layer: {layer.layer_order}")
       self._write_run_summary("SUCCESS")
       sys.exit(0)
@@ -385,8 +397,12 @@ class BatchRunner:
     if self.args.run_flags.skip_iter:
       self.state.error = not utl.skip_iterations(target_itr - cur_it, sid)
     elif self.args.run_flags.skip_iter2:
+      is_last_layer = self.state.get_next_layer_for_stamp(sid, idx=1) is None
       self.state.error = not utl.skip_iterations_to_lock_acq(
-        self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc, target_itr - cur_it, sid
+        self.design_info.work_dir.stamp(sid).post_layer_lock_acq_pc,
+        target_itr - cur_it,
+        sid,
+        is_last_layer,
       )
     else:
       while cur_it < target_itr:
@@ -435,7 +451,8 @@ class BatchRunner:
         if not res:
           self.state.error = True
 
-    # Unhalt right replicas that have no remaining future layer
+    # Unhalt replicas with no remaining future layer. Breakpoints must be
+    # cleared first, or the core re-halts at its still-armed start_pc.
     overlay = self.design_info.overlay
     total_replicas = len(self.state.pm_reload)
     if total_replicas > 1 and (target_itr is None or target_itr == layer.lcp.num_iter):
@@ -443,6 +460,9 @@ class BatchRunner:
         if overlay.is_leftmost_in_batch(sid):
           continue
         if not self.state.get_next_layer_for_stamp(sid, idx=1):
+          self.impls[sid].clear_pc_breakpoint(0)
+          self.impls[sid].clear_pc_breakpoint(1)
+          self.impls[sid].disable_pc_halt()
           self.impls[sid].continue_aie()
 
     if self.state.error:

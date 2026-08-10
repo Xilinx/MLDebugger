@@ -28,6 +28,9 @@ unsupported_superkernels = [
   "mllib_graphs::mha_type1::mha_adf_wrapper",
   # Causes failure. TODO: investigate
   "superkernel_eltunary",
+  # Padding preamble; halting on it desyncs PC/iteration stepping on HW
+  "buffer_pad_innermost",
+  "superkernel_conv_eltbinary",
 ]
 
 
@@ -235,7 +238,17 @@ class Layer:
   Contains all buffer, iteration, and kernel (stamp) mapping information.
   """
 
-  def __init__(self, info, size_shift, version, aie_iface, num_stamps, mladf_report, num_batches=1):
+  def __init__(
+    self,
+    info,
+    size_shift,
+    version,
+    aie_iface,
+    num_stamps,
+    mladf_report,
+    num_batches=1,
+    device_batch_size=1,
+  ):
     """
     Initialize a Layer object using given metadata, populating buffer and kernel/stamp lists.
 
@@ -248,6 +261,8 @@ class Layer:
       mladf_report: Optional MladfReport for templated-graph layers.
       num_batches (int): Number of batches (B from BxSxCxR overlay). Each
         batch is a data-parallel copy of the per-batch stamps; defaults to 1.
+      device_batch_size (int): buffer_info's device_batch_size, before any
+        single-replica collapse. Gates the mladf stamp-count correction.
     """
     self.flexml_ids = []
     self.l3_ifm_buffers = []
@@ -274,6 +289,17 @@ class Layer:
       return
 
     n_stamps = info.get("no_of_stamps")
+    # buffer_info's no_of_stamps is sometimes wrong and mladf is authoritative
+    # TBD: it details only one batch replica, make it work with nBnS mode
+    if mladf_report and device_batch_size == 1 and num_stamps > 1:
+      # None or 0 means mladf could not answer; fall back to buffer_info.
+      true_n = mladf_report.get_running_stamp_count(self.layer_order, num_stamps)
+      if true_n and n_stamps and true_n != n_stamps:
+        LOGGER.log(
+          f"[WARNING] Layer {self.layer_order}: buffer_info no_of_stamps={n_stamps} "
+          f"disagrees with mladf ({true_n}); using {true_n}."
+        )
+      n_stamps = true_n or n_stamps
     if n_stamps and n_stamps < num_stamps:
       num_stamps = n_stamps
 
@@ -877,9 +903,57 @@ class LayerInfo:
     for entry in raw_layers:
       info = entry[1]
       layer = Layer(
-        info, size_shift, version, aie_iface, num_stamps, self.mladf_report, num_batches=num_batches
+        info,
+        size_shift,
+        version,
+        aie_iface,
+        num_stamps,
+        self.mladf_report,
+        num_batches=num_batches,
+        device_batch_size=self.layout[0],
       )
       self.layers.append(layer)
+    self._reorder_layers_by_execution()
+
+  def _reorder_layers_by_execution(self):
+    """
+    Stable-sort layers into true execution order (mladf `layer_id`), which the
+    backend reschedules away from buffer_info's MLIR/DAG `layer_order`.
+    """
+    if not self.mladf_report:
+      return
+
+    keys = []
+    last_seen = -1
+    prev_exec = None
+    disagreement = False
+    for layer in self.layers:
+      exec_order = self.mladf_report.get_exec_order_for_bilo(layer.layer_order)
+      if exec_order is None:
+        if layer.lcp.is_tg and not layer.is_unsupported:
+          LOGGER.log(
+            f"[WARNING] No mladf execution order for TG layer {layer.layer_order}; "
+            "disabling it (its kernel dumps are skipped)."
+          )
+          layer.is_unsupported = True
+        # Anchor an unmapped layer to the previous execution slot (mladf scale).
+        exec_order = last_seen
+      else:
+        last_seen = exec_order
+        if not layer.lcp.is_tg:
+          if prev_exec is not None and exec_order < prev_exec:
+            disagreement = True
+          prev_exec = exec_order
+      keys.append(exec_order)
+
+    if disagreement:
+      LOGGER.log(
+        "[WARNING] buffer_info layer_order disagrees with mladf execution order; "
+        "layer sequencing may be unreliable."
+      )
+
+    order = sorted(range(len(self.layers)), key=lambda i: (keys[i], i))
+    self.layers = [self.layers[i] for i in order]
 
   def _initialize_layers_from_workdir_x2(self, args):
     """
@@ -972,6 +1046,11 @@ class LayerInfo:
             ),
             None,
           )
+          # Fall back to the mladf report's authoritative per-core ELF.
+          if elf_id is None and self.mladf_report:
+            mladf_elf = self.mladf_report.get_elfid_for_bilo(layer.layer_order, sid)
+            if mladf_elf not in (None, -1) and str(mladf_elf) in funcs_by_elf:
+              elf_id = str(mladf_elf)
         else:
           elf_id = next((e for e, fns in funcs_by_elf.items() if key in fns), None)
 

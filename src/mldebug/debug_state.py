@@ -104,6 +104,23 @@ class DebugState:
           return l
     return None
 
+  def exec_index(self, order, default=None):
+    """
+    Position of the layer with this buffer_info `layer_order` in execution
+    order, or `default` if no layer has it.
+
+    Args:
+      order (int): The layer_order value sought.
+      default: Returned when no layer matches.
+
+    Returns:
+      Index into self.layers, or `default`.
+    """
+    for i, l in enumerate(self.layers):
+      if l.layer_order == order:
+        return i
+    return default
+
   def get_next_layer(self):
     """
     Retrieve the layer object for the next sequential layer.
@@ -126,12 +143,13 @@ class DebugState:
 
   def add_breakpoint(self, layer, iteration):
     """
-    Add a (layer, iteration) tuple as a manual breakpoint
-    and sort the list of manual breakpoints.
+    Add a (layer, iteration) tuple as a manual breakpoint and keep the list in
+    execution order (layer_order is not the execution order).
 
     Args:
-      layer (int): Layer index (or handle).
+      layer (int): Layer order value.
       iteration (int): Iteration number within the layer.
     """
     self.manual_breakpoints.append((layer, iteration))
-    self.manual_breakpoints = sorted(self.manual_breakpoints)
+    last = len(self.layers)
+    self.manual_breakpoints.sort(key=lambda bp: (self.exec_index(bp[0], last), bp[1]))

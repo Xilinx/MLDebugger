@@ -142,7 +142,9 @@ class InteractiveController:
     if current_layer:
       current_layer_order = current_layer.layer_order
     final_layer_order = self.state.get_last_layer().layer_order
-    if layer_num < current_layer_order or layer_num > final_layer_order:
+    # Compare execution positions: a later layer can have a smaller layer_order.
+    target = self.state.exec_index(layer_num)
+    if target is None or target < self.state.current_layer:
       print(
         f"[ERROR] Layer Out of bounds. Current: {current_layer_order} Final: {final_layer_order}"
       )
@@ -192,9 +194,10 @@ class InteractiveController:
       ta_layer, ta_itr = self.state.manual_breakpoints.pop(0)
 
     print(f"Goto next breakpoint at layer {ta_layer} iteration {ta_itr}")
+    ta_index = self.state.exec_index(ta_layer, len(self.state.layers))
     while True:
       cur_layer = self.state.get_current_layer()
-      if not cur_layer or not cur_layer.layer_order < ta_layer:
+      if not cur_layer or not self.state.current_layer < ta_index:
         break
       if not self.step_layer():
         print(f"Unable to continue to breakpoint at layer {ta_layer} iteration {ta_itr}")

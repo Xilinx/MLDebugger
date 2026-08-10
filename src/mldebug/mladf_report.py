@@ -10,6 +10,8 @@ import re
 
 from pathlib import Path
 
+from mldebug.utils import LOGGER
+
 
 def load_json(path):
   """
@@ -49,6 +51,45 @@ class MladfReport:
     """
     aiec_layer_keys = self.bi_to_m2.get(bilo, [])
     return [self.m2_layers[k] for k in aiec_layer_keys]
+
+  def get_running_stamp_count(self, bilo, max_stamps):
+    """
+    Number of per-batch stamps running a kernel for a buffer_info layer, or
+    None if the report does not describe all `max_stamps` stamp cores.
+    """
+    aiec_layers = self.get_aiec_layers_by_bilo(bilo)
+    running = []
+    described = 0
+    for s in range(max_stamps):
+      # Batch 0 only: per-batch stamp s is the core at column s*cps, row 0.
+      core = f"{s * self.cps}_0"
+      infos = [lyr.get("core_information", {}).get(core) for lyr in aiec_layers]
+      infos = [i for i in infos if i is not None]
+      if not infos:
+        continue
+      described += 1
+      # A core can be listed (its ELF is loaded) with an empty kernel_name,
+      # meaning it does not run this layer's compute.
+      if any(i.get("kernel_name", "") for i in infos):
+        running.append(s)
+    # An absent core makes the count untrustworthy; the caller keeps buffer_info's value.
+    if described < max_stamps:
+      return None
+    # Callers treat the count as stamps 0..n-1, so a gap would mislabel them.
+    if running != list(range(len(running))):
+      LOGGER.log(
+        f"[WARNING] Layer {bilo}: mladf running stamps {running} are not a "
+        "contiguous prefix; stamp mapping may be wrong."
+      )
+    return len(running)
+
+  def get_exec_order_for_bilo(self, bilo):
+    """
+    Smallest mladf `layer_id` (the real execution/PM-reload order) for a
+    buffer_info layer_order, or None if unmapped.
+    """
+    ids = [lyr["layer_id"] for lyr in self.get_aiec_layers_by_bilo(bilo) if "layer_id" in lyr]
+    return min(ids) if ids else None
 
   def get_skname_for_bilo(self, bilo, sid=0):
     """

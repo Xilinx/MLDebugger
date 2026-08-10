@@ -178,11 +178,20 @@ class AIEUtil:
     write(reg_map["DEBUG_CONTROL1"], pc_event << 16)
     return True
 
-  def skip_iterations_to_lock_acq(self, lock_acq_pc, count, sid):
+  def skip_iterations_to_lock_acq(self, lock_acq_pc, count, sid, is_last_layer=False):
     """
     Skip iterations without using counter
     """
     if self._is_test_mode() or count == 0:
+      return True
+
+    # No next-layer lock to break on: run the core out to Core_Done so it
+    # releases its locks / program memory for the other stamps' PM reload.
+    if is_last_layer:
+      self.impl.clear_pc_breakpoint(0)
+      self.impl.clear_pc_breakpoint(1)
+      self.impl.disable_pc_halt()
+      self.impl.continue_aie()
       return True
 
     self.impl.set_pc_breakpoint(lock_acq_pc)
