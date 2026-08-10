@@ -289,9 +289,9 @@ class Layer:
       return
 
     n_stamps = info.get("no_of_stamps")
-    # buffer_info's no_of_stamps is sometimes wrong; mladf is authoritative,
-    # but it details only one batch replica so it is unusable when B > 1.
-    if mladf_report and device_batch_size == 1:
+    # buffer_info's no_of_stamps is sometimes wrong and mladf is authoritative
+    # TBD: it details only one batch replica, make it work with nBnS mode
+    if mladf_report and device_batch_size == 1 and num_stamps > 1:
       # None or 0 means mladf could not answer; fall back to buffer_info.
       true_n = mladf_report.get_running_stamp_count(self.layer_order, num_stamps)
       if true_n and n_stamps and true_n != n_stamps:
