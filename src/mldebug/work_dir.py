@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mldebug.extra.calltree import AIECallTree
-from mldebug.kernel_info import build_kernel_info
+from mldebug.extra.kernel_info import build_kernel_info
 from mldebug.utils import LOGGER, is_aarch64, is_windows
 
 
@@ -621,7 +621,7 @@ class WorkDir:
         function_name = self.parse_function_sig_llvm(m_fc.group(2))
         start_pc = int(m_fc.group(1), base=16)
         in_func = AIEFunction(function_name, start_pc, 0, 0, False)
-      # end pc — match insn lines only; "ret" in path text (e.g. pretrained) is not an insn
+      # end pc -- match insn lines only; "ret" in path text (e.g. pretrained) is not an insn
       elif self._is_llvm_insn_line(line) and re.search(r"\bret\b", line):
         # functions with multiple returns
         if not in_func:

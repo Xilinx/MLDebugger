@@ -946,12 +946,9 @@ class LayerInfo:
     segments = self.mladf_report.get_layer_id_segments(bilo)
     if len(segments) < 2:
       return
-    span = self.mladf_report.format_layer_id_display([i for s in segments for i in s])
     LOGGER.log(
       f"[WARNING] Layer {bilo} ({info.get('layer_name', '')}) is scheduled in "
-      f"{len(segments)} chunks ({span}) but buffer_info describes it as one layer. "
-      "Stepping it whole, positioned at its last chunk; its iteration count "
-      "covers every chunk and its ELF is taken from the first."
+      f"{len(segments)} chunks."
     )
 
   def _reorder_layers_by_execution(self):

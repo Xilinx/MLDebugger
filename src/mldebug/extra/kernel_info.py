@@ -149,8 +149,8 @@ def _build_tree(root_symbol, functions, demangle):
       last = i == len(callees) - 1
       visit(
         callee,
-        child_prefix + ("└── " if last else "├── "),
-        child_prefix + ("    " if last else "│   "),
+        child_prefix + "|-- ",
+        child_prefix + ("    " if last else "|   "),
       )
 
   visit(root_symbol, "", "")

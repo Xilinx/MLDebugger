@@ -11,8 +11,8 @@ the report can grow without touching metadata parsing.
 Each layer is one record of two lines: every number on the first, then the two
 names stacked in one text column:
 
-    BE_ID #ITERS #STAMPS  MLADF_IDS  BE_LAYER_NAME
-                                     └ KERNEL
+      ID  #ITERS #STAMPS  #MLADF  LAYER_NAME
+                                  |-- KERNEL
 
 The numbers are fixed-width and left of the names, and neither name is capped,
 so a name wider than the terminal costs readability of that name only -- every
@@ -23,15 +23,14 @@ _EMPTY = "-"
 _UNKNOWN = "?"
 _SEPARATOR_CHAR = "-"
 
-# Numeric column widths, each sized for its header since those are wider than
-# the values in practice. MLADF_IDS also has to fit a span like "60,79-131".
+# Numeric column widths, each sized for its header.
 _ID_W = 4
 _ITERS_W = 7
 _STAMPS_W = 7
 _MLADF_W = 7
 _GAP = "  "
-# Hangs KERNEL under BE_LAYER_NAME so the second line reads as subordinate.
-_KERNEL_MARK = "└ "
+# Hangs KERNEL under LAYER_NAME so the second line reads as subordinate.
+_KERNEL_MARK = "|-- "
 
 
 def _numbers(be_id, iters, stamps, mladf):

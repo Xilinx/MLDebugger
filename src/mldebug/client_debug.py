@@ -18,10 +18,10 @@ from mldebug.backend.factory import BackendConfig, create_backend
 from mldebug.batch_runner import BatchRunner
 from mldebug.debug_state import DebugState
 from mldebug.debug_server import DebugServer
+from mldebug.extra.kernel_info import format_kernel_info
+from mldebug.extra.layer_report import format_layer_report
 from mldebug.interactive_controller import InteractiveController
-from mldebug.kernel_info import format_kernel_info
 from mldebug.layer_info import LayerInfo
-from mldebug.layer_report import format_layer_report
 from mldebug.memory_dumper import MemoryDumper
 from mldebug.utils import LOGGER, register_debug_server
 
