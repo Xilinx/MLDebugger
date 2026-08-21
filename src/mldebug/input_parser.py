@@ -145,8 +145,8 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     get_flag("disable_tg"),
   )
 
-  # Support all stamps in standalone mode
-  if args.aie_only:
+  # Support all stamps in standalone mode and when reporting the design's layers
+  if args.aie_only or args.dump_layers:
     args.run_flags.multistamp=True
 
 

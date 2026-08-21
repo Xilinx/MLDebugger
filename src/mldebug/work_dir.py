@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mldebug.extra.calltree import AIECallTree
+from mldebug.kernel_info import build_kernel_info
 from mldebug.utils import LOGGER, is_aarch64, is_windows
 
 
@@ -659,6 +660,46 @@ class WorkDir:
           if func.start_pc <= pc <= func.end_pc:
             funclist.append(f"{elf}:{func.name}")
     return funclist
+
+  def _find_elf(self, sid, elf_id):
+    """
+    Full ELF directory name for a layer stamp's elf_id, or None when unknown.
+    """
+    # LayerInfo indexes ELFs by the text after 'reloadable', or the core name for the base ELF.
+    return next(
+      (e for e in self.stamps[sid].aie_functions if e.split("reloadable")[-1] == str(elf_id)),
+      None,
+    )
+
+  def get_kernel_info(self, layer_stamps):
+    """
+    Call tree of each of a layer's stamps, one KernelInfo per stamp found in a map file.
+    """
+    cache = {}
+
+    def demangle(symbol):
+      if symbol not in cache:
+        cache[symbol] = self._demangle(symbol)
+      return cache[symbol]
+
+    kernels = []
+    for sid, stamp in enumerate(layer_stamps[: self.stamps_per_batch]):
+      elf = self._find_elf(sid, stamp.elf_name)
+      if not elf or not stamp.start_pc:
+        continue
+      map_path = Path(self.aie_dir) / "aie" / elf / "Release" / f"{elf}.map"
+      if not map_path.is_file():
+        continue
+      kernel = build_kernel_info(
+        map_path,
+        stamp.start_pc,
+        self.stamps[sid].aie_functions[elf],
+        demangle,
+        f"stamp {sid} (elf {elf})",
+      )
+      if kernel:
+        kernels.append(kernel)
+    return kernels
 
   def print_aie_functions(self, elf_id=None):
     """

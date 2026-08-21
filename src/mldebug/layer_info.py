@@ -272,6 +272,11 @@ class Layer:
     self.out_buffers = []
     self.wts_buffers = []
     self.layer_order = info["layer_order"]
+    self.layer_name = info.get("layer_name", "")
+    # mladf layer_ids this Layer covers.
+    self.mladf_ids = []
+    if mladf_report:
+      self.mladf_ids = mladf_report.get_layer_ids_for_bilo(self.layer_order)
     self.lcp = Lcp()
     self.pm_work_dir = info.get("pm", None)
     self.is_unsupported = False
@@ -293,7 +298,7 @@ class Layer:
     # TBD: it details only one batch replica, make it work with nBnS mode
     if mladf_report and device_batch_size == 1 and num_stamps > 1:
       # None or 0 means mladf could not answer; fall back to buffer_info.
-      true_n = mladf_report.get_running_stamp_count(self.layer_order, num_stamps)
+      true_n = mladf_report.get_running_stamp_count(self.layer_order, num_stamps, self.mladf_ids)
       if true_n and n_stamps and true_n != n_stamps:
         LOGGER.log(
           f"[WARNING] Layer {self.layer_order}: buffer_info no_of_stamps={n_stamps} "
@@ -317,8 +322,8 @@ class Layer:
     # Fill missing TG metadata from mladf report
     if self.lcp.is_tg:
       for sid, stamp in enumerate(self.stamps):
-        stamp.name = mladf_report.get_skname_for_bilo(self.layer_order, sid)
-        stamp.elf_name = mladf_report.get_elfid_for_bilo(self.layer_order, sid)
+        stamp.name = mladf_report.get_skname_for_bilo(self.layer_order, sid, self.mladf_ids)
+        stamp.elf_name = mladf_report.get_elfid_for_bilo(self.layer_order, sid, self.mladf_ids)
         if (
           not stamp.name
           or stamp.elf_name == -1
@@ -329,7 +334,7 @@ class Layer:
           )
           self.is_unsupported = True
           return
-      self.lcp.num_iter = mladf_report._get_iters_for_bilo(self.layer_order)
+      self.lcp.num_iter = mladf_report._get_iters_for_bilo(self.layer_order, self.mladf_ids)
 
     self._initialize_l3_buffers(info, version)
 
@@ -506,15 +511,21 @@ class Layer:
       if name in info:
         self.out_buffers.append(Buffer(info[name], name, size_shift, aie_iface, ofm=True))
 
+  def format_stamps(self):
+    """
+    One indented line per stamp: its ELF, kernel and the PCs the debugger breaks on.
+    """
+    return "\n".join(
+      f"  Stamp {i}: elf: {stamp.elf_name}, kernels: {stamp.name}"
+      f", start pc: {stamp.start_pc}, final lock release pc: {stamp.end_pc}"
+      for i, stamp in enumerate(self.stamps)
+    )
+
   def __str__(self):
     """
     Pretty-print metainfo about this layer. Returns kernel and iteration info.
     """
-    s = f"iters: {self.lcp.num_iter}"
-    for i, stamp in enumerate(self.stamps):
-      s += f"\n  Stamp {i}: elf: {stamp.elf_name}, kernels: {stamp.name}"
-      s += f", start pc: {stamp.start_pc}, final lock release pc: {stamp.end_pc}"
-    return s
+    return "\n".join(filter(None, [f"iters: {self.lcp.num_iter}", self.format_stamps()]))
 
 
 class LayerInfo:
@@ -661,16 +672,16 @@ class LayerInfo:
             imap[elf][1] = max(imap[elf][1], order)
     return info
 
-  def print_info(self):
+  def format_info(self):
     """
-    Print an overview of the loaded/stamped layers in human readable format.
+    Which ELF each stamp runs and over which layer range, or '' when unknown.
     """
     info = self._create_info()
     sep = "--------------------------------------------"
     m = "Design info (Excluding TG Layer IDs)\n"
     m += f"{sep}\nFlexml Layer Count: {len(self.layers)}\n{sep}"
     if not self.work_dir.stamps or not self.layers:
-      return
+      return ""
     for sid, imap in info.items():
       m += f"\nStamp {sid}: "
       for eid, (min_layer, max_layer) in imap.items():
@@ -680,7 +691,15 @@ class LayerInfo:
           m += f"{{{eid}: {min_layer}-{max_layer}}} "
     m += "\n"
     m += "--------------------------------------------"
-    LOGGER.log(m)
+    return m
+
+  def print_info(self):
+    """
+    Print an overview of the loaded/stamped layers in human readable format.
+    """
+    info = self.format_info()
+    if info:
+      LOGGER.log(info)
 
   def initialize_l3_offsets(self, flexmlrt_hsi, external_buffer_id):
     """
@@ -902,18 +921,38 @@ class LayerInfo:
     raw_layers = sorted(raw_layers.items(), key=lambda item: item[1]["layer_order"])
     for entry in raw_layers:
       info = entry[1]
-      layer = Layer(
-        info,
-        size_shift,
-        version,
-        aie_iface,
-        num_stamps,
-        self.mladf_report,
-        num_batches=num_batches,
-        device_batch_size=self.layout[0],
+      self._warn_if_scheduled_in_chunks(info)
+      self.layers.append(
+        Layer(
+          info,
+          size_shift,
+          version,
+          aie_iface,
+          num_stamps,
+          self.mladf_report,
+          num_batches=num_batches,
+          device_batch_size=self.layout[0],
+        )
       )
-      self.layers.append(layer)
     self._reorder_layers_by_execution()
+
+  def _warn_if_scheduled_in_chunks(self, info):
+    """
+    Warn when the compiler scheduled one buffer_info layer in several chunks.
+    """
+    if not self.mladf_report:
+      return
+    bilo = info["layer_order"]
+    segments = self.mladf_report.get_layer_id_segments(bilo)
+    if len(segments) < 2:
+      return
+    span = self.mladf_report.format_layer_id_display([i for s in segments for i in s])
+    LOGGER.log(
+      f"[WARNING] Layer {bilo} ({info.get('layer_name', '')}) is scheduled in "
+      f"{len(segments)} chunks ({span}) but buffer_info describes it as one layer. "
+      "Stepping it whole, positioned at its last chunk; its iteration count "
+      "covers every chunk and its ELF is taken from the first."
+    )
 
   def _reorder_layers_by_execution(self):
     """
@@ -928,7 +967,9 @@ class LayerInfo:
     prev_exec = None
     disagreement = False
     for layer in self.layers:
-      exec_order = self.mladf_report.get_exec_order_for_bilo(layer.layer_order)
+      # Last id, not first: a layer scheduled in several chunks spans a gap,
+      # and it is least wrong to place it where it ends.
+      exec_order = max(layer.mladf_ids) if layer.mladf_ids else None
       if exec_order is None:
         if layer.lcp.is_tg and not layer.is_unsupported:
           LOGGER.log(

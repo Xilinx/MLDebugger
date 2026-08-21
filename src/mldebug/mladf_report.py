@@ -13,6 +13,23 @@ from pathlib import Path
 from mldebug.utils import LOGGER
 
 
+def _compact_id_ranges(ids):
+  """Collapse sorted layer ids into comma-separated spans, e.g. ``59,157-209``."""
+  if not ids:
+    return None
+  ids = sorted(set(ids))
+  parts = []
+  start = prev = ids[0]
+  for cur in ids[1:]:
+    if cur == prev + 1:
+      prev = cur
+      continue
+    parts.append(str(start) if start == prev else f"{start}-{prev}")
+    start = prev = cur
+  parts.append(str(start) if start == prev else f"{start}-{prev}")
+  return ",".join(parts)
+
+
 def load_json(path):
   """
   utility
@@ -43,21 +60,51 @@ class MladfReport:
     self.bi_layers = bi_data.get("layers", {})
     self.m2_layers = m2_data.get("layer_information", {})
     self.bi_to_m2 = self._approach1_map(self.bi_layers, self.m2_layers)
+    self._warn_unmapped_compute()
 
-  def get_aiec_layers_by_bilo(self, bilo):
+  def get_unclaimed_layers(self):
     """
-    Return list of aiecompiler layers for a specific
-    layer_order in buffer_info
+    mladf layers no buffer_info layer maps to, split into (compute, other).
+    """
+    # An unclaimed compute layer is a mapping failure; data movement is expected.
+    claimed = {k for keys in self.bi_to_m2.values() for k in keys}
+    compute, other = [], []
+    for key, layer in self.m2_layers.items():
+      if key in claimed:
+        continue
+      (compute if layer.get("is_compute_layer") else other).append(key)
+    return compute, other
+
+  def _warn_unmapped_compute(self):
+    """Complain when a kernel-running mladf layer maps to no buffer_info layer."""
+    compute, _ = self.get_unclaimed_layers()
+    if not compute:
+      return
+    ids = [self.m2_layers[k].get("layer_id") for k in compute]
+    ids = sorted(i for i in ids if i is not None)
+    LOGGER.log(
+      f"[WARNING] {len(compute)} mladf compute layer(s) map to no buffer_info "
+      f"layer: {_compact_id_ranges(ids) or '?'}. Their kernels cannot be "
+      "stepped or dumped; layer positions may also be off."
+    )
+
+  def get_aiec_layers_by_bilo(self, bilo, ids=None):
+    """
+    aiecompiler layers for a buffer_info layer_order, optionally narrowed to `ids`.
     """
     aiec_layer_keys = self.bi_to_m2.get(bilo, [])
-    return [self.m2_layers[k] for k in aiec_layer_keys]
+    layers = [self.m2_layers[k] for k in aiec_layer_keys]
+    if ids is None:
+      return layers
+    ids = set(ids)
+    return [lyr for lyr in layers if lyr.get("layer_id") in ids]
 
-  def get_running_stamp_count(self, bilo, max_stamps):
+  def get_running_stamp_count(self, bilo, max_stamps, ids=None):
     """
     Number of per-batch stamps running a kernel for a buffer_info layer, or
     None if the report does not describe all `max_stamps` stamp cores.
     """
-    aiec_layers = self.get_aiec_layers_by_bilo(bilo)
+    aiec_layers = self.get_aiec_layers_by_bilo(bilo, ids)
     running = []
     described = 0
     for s in range(max_stamps):
@@ -83,19 +130,39 @@ class MladfReport:
       )
     return len(running)
 
-  def get_exec_order_for_bilo(self, bilo):
-    """
-    Smallest mladf `layer_id` (the real execution/PM-reload order) for a
-    buffer_info layer_order, or None if unmapped.
-    """
-    ids = [lyr["layer_id"] for lyr in self.get_aiec_layers_by_bilo(bilo) if "layer_id" in lyr]
-    return min(ids) if ids else None
+  def get_layer_ids_for_bilo(self, bilo):
+    """Sorted unique mladf layer_id values mapped to a buffer_info layer."""
+    return sorted(
+      {
+        self.m2_layers[k]["layer_id"]
+        for k in self.bi_to_m2.get(bilo, [])
+        if "layer_id" in self.m2_layers[k]
+      }
+    )
 
-  def get_skname_for_bilo(self, bilo, sid=0):
+  def get_layer_id_segments(self, bilo):
+    """
+    The layer's mladf `layer_id`s as contiguous runs; >1 run means split scheduling.
+    """
+    segments = []
+    for lid in self.get_layer_ids_for_bilo(bilo):
+      if segments and lid == segments[-1][-1] + 1:
+        segments[-1].append(lid)
+      else:
+        segments.append([lid])
+    return segments
+
+  def format_layer_id_display(self, ids):
+    """
+    Format mladf layer_ids for reports: contiguous runs as ``lo-hi``, gaps kept.
+    """
+    return _compact_id_ranges(ids)
+
+  def get_skname_for_bilo(self, bilo, sid=0, ids=None):
     """
     return superkernel for buffer info layer
     """
-    aiec_layers = self.get_aiec_layers_by_bilo(bilo)
+    aiec_layers = self.get_aiec_layers_by_bilo(bilo, ids)
     if aiec_layers:
       core = f"{sid * self.cps}_0"
       if aiec_layers[0]["core_information"].get(core):
@@ -108,11 +175,11 @@ class MladfReport:
         print(f"[WARNING] MLADF Info for core {core} at Layer_{bilo} not found")
     return ""
 
-  def _get_iters_for_bilo(self, bilo):
+  def _get_iters_for_bilo(self, bilo, ids=None):
     """
     find iters for a layer
     """
-    aiec_layers = self.get_aiec_layers_by_bilo(bilo)
+    aiec_layers = self.get_aiec_layers_by_bilo(bilo, ids)
     if not aiec_layers:
       return 1
     iters = 0
@@ -120,11 +187,11 @@ class MladfReport:
       iters += aiec_layer["core_information"]["0_0"]["kernel_repetition"]
     return iters
 
-  def get_elfid_for_bilo(self, bilo, sid):
+  def get_elfid_for_bilo(self, bilo, sid, ids=None):
     """
     Find elf ID for buffer info layer order + stamp id
     """
-    aiec_layers = self.get_aiec_layers_by_bilo(bilo)
+    aiec_layers = self.get_aiec_layers_by_bilo(bilo, ids)
     if not aiec_layers:
       return -1
 
@@ -208,29 +275,47 @@ class MladfReport:
     parent = re.sub(r"_layer_\d+$", "", stripped)
     return parent
 
+  def _kernel_instance(self, m2_layer):
+    """The layer's kernel_instance, from the first core that reports one."""
+    for core in m2_layer.get("core_information", {}).values():
+      kinst = core.get("kernel_instance", "")
+      if kinst:
+        return kinst
+    return ""
+
   def _approach1_map(self, bi_layers, m2_layers):
     """
-    Map each m2 layer to exactly one buffer_info layer via parent graph name.
+    Map each m2 layer to the buffer_info layer that owns it.
     """
     bi_parents = {}
-    for _, bi_layer in bi_layers.items():
+    bi_prefix = {}
+    for bi_layer in bi_layers.values():
       bi_key = bi_layer["layer_order"]
-      parents = set()
-      for obj_name in bi_layer.get("layer_object_name", []):
-        parents.add(self._extract_parent_graph(obj_name))
-      bi_parents[bi_key] = parents
+      objs = bi_layer.get("layer_object_name", [])
+      bi_parents[bi_key] = {self._extract_parent_graph(obj) for obj in objs}
+      if bi_layer.get("templated_graph") and len(objs) == 1:
+        bi_prefix[bi_key] = f"{objs[0]}."
 
     m2_parents = {}
+    m2_kinst = {}
     for m2_key, m2_layer in m2_layers.items():
-      kernel_str = m2_layer.get("kernel_node_instances", "")
-      m2_parents[m2_key] = self._extract_m2_parent_graphs(kernel_str)
+      m2_parents[m2_key] = self._extract_m2_parent_graphs(
+        m2_layer.get("kernel_node_instances", "")
+      )
+      m2_kinst[m2_key] = self._kernel_instance(m2_layer)
 
     bi_to_m2 = {}
     for bi_key, bi_pgraphs in bi_parents.items():
-      bi_to_m2[bi_key] = []
-      for m2_key, m2_pgraphs in m2_parents.items():
-        overlap = m2_pgraphs & bi_pgraphs
-        if overlap:
-          bi_to_m2[bi_key].append(m2_key)
+      keys = []
+      prefix = bi_prefix.get(bi_key)
+      # Exact "<object>." prefix, the key MLProfilerEngine uses. The dot marks the
+      # boundary, so templated_graph_10 cannot swallow templated_graph_101_0.
+      if prefix:
+        keys = [k for k in m2_parents if m2_kinst[k].startswith(prefix)]
+      # Looser fallback: regex-derived parent names, so an accidental overlap is
+      # possible. Also covers TG layers whose m2 layers report no kernel_instance.
+      if not keys:
+        keys = [k for k, pgraphs in m2_parents.items() if pgraphs & bi_pgraphs]
+      bi_to_m2[bi_key] = keys
 
     return bi_to_m2
