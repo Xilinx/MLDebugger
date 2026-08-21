@@ -2,7 +2,7 @@
 # Copyright (C) 2024-2026 Advanced Micro Devices, Inc. All rights reserved.
 
 """
-Rebuild a kernel's call tree from the linker map file.
+Rebuild a kernel's call tree from the compiler's build artifacts.
 
 Some superkernels fuse many ops behind a single wrapper that the debugger can
 only break on as a whole -- templated-graph (TG) kernels today. The caller
@@ -10,23 +10,28 @@ decides which layers are worth breaking down; this module just builds the tree
 for whatever kernel entry PC it is handed, so the interactive 'i'/info() command
 can show what a layer's kernel is actually made of.
 
-The map file's PM section lists every function with its address range, stack
-frame and callees, which is enough to recover the tree without the compiler's
-own .calltree file. Only the Synopsys bridge (Chess) layout is parsed today:
+Where the call edges come from depends on the compiler:
+
+Chess. The bridge map file's PM section lists every function with its address
+range, stack frame and callees, which is all we need:
 
     0x000009e0..0x00000b57 (       376 items) : <obj>::<symbol> (Function, Global, .text) ...
 
                 Called functions  : <symbol>
                                     <symbol>
 
-Peano/lld map files use a different layout and yield nothing; add a second
-parser here when that flow is needed.
+Peano. The lld map file is a plain symbol table with no call graph in it at
+all, so the edges come from the disassembly instead -- the `jl` targets that
+AIECallTree already recovers. Sizes and stack frames are map-only, so they read
+as unknown for Peano designs.
 """
 
 import re
 import textwrap
 from collections import namedtuple
 from dataclasses import dataclass, field
+
+from mldebug.extra.calltree import AIECallTree
 
 _MEM_SECTION = re.compile(r"^Memory map for memory '(\S+)':")
 _ENTRY = re.compile(r"^\s+0x([0-9a-f]+)\.\.0x[0-9a-f]+\s+\(\s*(\d+) items\)\s*:\s*(.+?)\s*$")
@@ -132,7 +137,7 @@ def _readable(name):
   return m_mangled.group(2)[: int(m_mangled.group(1))] or name
 
 
-def _build_tree(root_symbol, functions, demangle):
+def _build_tree(root_symbol, functions, name_of):
   """Flatten the call tree under root_symbol into pre-order KernelNodes."""
   nodes = []
   expanded = set()
@@ -140,7 +145,7 @@ def _build_tree(root_symbol, functions, demangle):
   def visit(symbol, branch, child_prefix):
     func = functions[symbol]
     repeated = symbol in expanded
-    nodes.append(KernelNode(func, _readable(demangle(symbol)), branch, repeated))
+    nodes.append(KernelNode(func, _readable(name_of(symbol)), branch, repeated))
     if repeated:
       return
     expanded.add(symbol)
@@ -173,6 +178,28 @@ def build_kernel_info(map_path, start_pc, aie_functions, demangle, location):
   if not root:
     return None
   nodes = _build_tree(root, functions, demangle)
+  _attach_pcs(nodes, aie_functions)
+  return KernelInfo(location, nodes)
+
+
+def _functions_from_lst(lst):
+  """MapFunction view of Peano disassembly, keyed by entry PC; sizes are map-only."""
+  functions = {}
+  for addr, func in AIECallTree.from_string(lst).functions.items():
+    callees = list(dict.fromkeys(target for _, target in func.calls))
+    functions[addr] = MapFunction(addr, addr, None, None, callees)
+  return functions
+
+
+def build_kernel_info_from_lst(lst, start_pc, aie_functions, location):
+  """Same as build_kernel_info, for Peano designs whose map file has no call graph."""
+  functions = _functions_from_lst(lst)
+  if start_pc not in functions:
+    return None
+  # The LST parser's own names stop at the first non-word character, so take
+  # them from the work dir's function database instead.
+  names = {func.start_pc: func.name for func in aie_functions}
+  nodes = _build_tree(start_pc, functions, lambda pc: names.get(pc) or f"<0x{pc:x}>")
   _attach_pcs(nodes, aie_functions)
   return KernelInfo(location, nodes)
 

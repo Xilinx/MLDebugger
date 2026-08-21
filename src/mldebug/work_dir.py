@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mldebug.extra.calltree import AIECallTree
-from mldebug.extra.kernel_info import build_kernel_info
+from mldebug.extra.kernel_info import build_kernel_info, build_kernel_info_from_lst
 from mldebug.utils import LOGGER, is_aarch64, is_windows
 
 
@@ -671,9 +671,29 @@ class WorkDir:
       None,
     )
 
+  def _stamp_kernel_info(self, sid, stamp, demangle):
+    """
+    Call tree of one layer stamp's kernel, or None when its ELF cannot supply one.
+    """
+    elf = self._find_elf(sid, stamp.elf_name)
+    if not elf or not stamp.start_pc:
+      return None
+    flist = self.stamps[sid].aie_functions[elf]
+    location = f"stamp {sid} (elf {elf})"
+    # Peano's lld map has no call graph, so its edges come from the disassembly.
+    if self.peano:
+      lst = dict(self.stamps[sid].lst_map).get(elf)
+      if not lst:
+        return None
+      return build_kernel_info_from_lst(lst, stamp.start_pc, flist, location)
+    map_path = Path(self.aie_dir) / "aie" / elf / "Release" / f"{elf}.map"
+    if not map_path.is_file():
+      return None
+    return build_kernel_info(map_path, stamp.start_pc, flist, demangle, location)
+
   def get_kernel_info(self, layer_stamps):
     """
-    Call tree of each of a layer's stamps, one KernelInfo per stamp found in a map file.
+    Call tree of each of a layer's stamps, one KernelInfo per stamp we can resolve.
     """
     cache = {}
 
@@ -684,19 +704,7 @@ class WorkDir:
 
     kernels = []
     for sid, stamp in enumerate(layer_stamps[: self.stamps_per_batch]):
-      elf = self._find_elf(sid, stamp.elf_name)
-      if not elf or not stamp.start_pc:
-        continue
-      map_path = Path(self.aie_dir) / "aie" / elf / "Release" / f"{elf}.map"
-      if not map_path.is_file():
-        continue
-      kernel = build_kernel_info(
-        map_path,
-        stamp.start_pc,
-        self.stamps[sid].aie_functions[elf],
-        demangle,
-        f"stamp {sid} (elf {elf})",
-      )
+      kernel = self._stamp_kernel_info(sid, stamp, demangle)
       if kernel:
         kernels.append(kernel)
     return kernels
