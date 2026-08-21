@@ -8,25 +8,26 @@ The tool has to be run inside the debug target.  
 
 #### Feature Summary
 
-Device Support: Phx, Stx, Telluride, npu3
+Device Support: Phx, Stx, Telluride (and its t20/t10 variants)
 
 ##### Standalone mode
 1. AIE Status, UC Status
-2. Use AIE Breakpoints, Single Step at overlay level
+2. AIE Breakpoints, Single Step at overlay level
 3. Peano design lst dump
-4. Function calltree and function list for all reloadables
+4. Calltrees and functions in reloadables
 5. Read/Write registers, memory
 
 ##### VAIML Batch Debug
 1. L1, L2, L3 Dump for each Layer in design for mismatch analysis
-2. Multi stamp, batch support, X2 support (TG support upcoming)
+2. Multi stamp, batch, X2 and Templated Graph (TG) support
 3. Status at Hang and at each layer
 4. Error Detection
 
 ##### VAIML Interactive Debug
 1. GDB Like Interface to step through and inspect layers
-2. Design Inspection
-3. Advanced mode with all Standalone functionality and per layer inspection
+2. Design Inspection, including a layer report that needs no hardware
+3. Subfunction call tree for TG layer kernels
+4. Advanced mode with all Standalone functionality and per layer inspection
 
 ##### XRT CoreDump Analysis
 All read features of Standalone mode like status, read_registers
@@ -69,7 +70,7 @@ sudo modprobe amdxdna timeout_in_sec=0
 
 Status Dump provides snapshot of AIE Array State in case of a hang.
 MLDebugger's Standalone mode (-s) is used for this purpose
-Supported devices : "phx", "stx", "telluride"
+Supported devices : "phx", "stx", "telluride", "t20", "t10"
 Default overlay is 4x4
 
 1. Start Application and wait for it to hang. Additionally, ENABLE_ML_DEBUG can be used to keep the hw_ctx alive
@@ -101,8 +102,8 @@ This feature can find source code lines where controller is stuck in case of a h
 1. Add initial Halt to VAIML Application. Find out location of initial halt elfs:
 ```
 python3 -c "import mldebug;from pathlib import Path; print(Path(mldebug.__file__).parent)"
-# Under this directory, look for "initial_halt_elfs/telluride" directory.
-NOTE: For git users, the halts can be found here: MLDebug/ext/initial_halt_elfs/telluride
+# Under this directory, look for "bin/initial_halt_elfs/telluride" directory.
+NOTE: For git users, the halts can be found here: MLDebug/src/mldebug/bin/initial_halt_elfs/telluride
 ```
 2. The initial halt elfs are of format <stamps>x<row>x<col>. Copy the elf that matches overlay to the design directory (for example: 4x4, will use 1x4x4)
 3. Add following content to xrt.ini:
@@ -135,10 +136,55 @@ mldebug -v <top level vaiml_design_folder>
 mldebug  -b .\resnet18\buffer_info.json -a .\resnet18\Work -l dumps -o 4x4
 ```
 
+### Layer Report
+
+Lists every layer the debugger can step through.
+
+```
+# Write to a file
+mldebug -v ./resnet18 --dump_layers layers.txt
+# Same report from inside interactive mode
+> layers layers.txt
+
+  ID  #ITERS #STAMPS  #MLADF  LAYER_NAME
+                              |-- KERNEL
+--------------------------------------------------------------
+   1       1       1       1  /Gather
+                              |-- mllib_graphs::concat_adf_wrapper<bfloat16>
+```
+
+### Inspecting a TG Layer's Kernel
+
+A TG layer's kernel fuses several ops behind one wrapper, so the debugger can
+only break on it as a whole. The interactive "i"/info() command breaks that
+wrapper down into its subfunctions, with the PCs to break on:
+
+```
+> i
+Current Layer: 58, Current Iteration: 1, #Iterations: 7
+Stopped at Start of Kernel(s):
+  Stamp 0: elf: 8, kernels: mllib_graphs::add_layernorm_adf_wrapper<bfloat16>, ...
+
+FUNCTION                                       START_PC    END_PC  LOCK_REL   SIZE  STACK
+-----------------------------------------------------------------------------------------
+mllib_graphs::add_layernorm_adf_wrapper        0x001210  0x0013ba  0x00138e    458     64
+|-- setup_add_layernorm_1pass_params           0x000c10  0x000c90         -    148      0
+|-- add_layernorm_1pass                        0x000cb0  0x0011d0         -   1362      0
+```
+
+SIZE and STACK come from the Chess map file, so they read as "-" on Peano
+designs, whose call tree is recovered from the disassembly instead.
+
 ### User Options
 
 ```
-usage: mldebug [-h] [-b <file>] [-a <file>] [-d DEV] [-o <cxr>] [-i] [-l <dir>] [-v <path>] [-s] [-l3] [-f [<flag1>, <flag2> ...]]
+usage: mldebug [-h] [-b <file>] [-a <file>] [-c COREDUMP_FILE]
+               [--dump-aie-status <output_file_name>]
+               [--dump_layers [<output_file_name>]]
+               [-d {phx,stx,telluride,npu3,t20,t10}] [-o <cxr>] [-i]
+               [-l <dir>] [-v <path>] [-x2 <path>] [-s]
+               [--load_script <filename>] [-l3] [--peano]
+               [-f [<flag1> <flag2> ...]]
 
  AIE Debug for VAIML Requirements:
   1. Active Hardware Context (xrt-smi in PATH)
@@ -155,22 +201,37 @@ options:
                         Use -d flag to specify device.
   --dump-aie-status <output_file_name>
                         Write AIE status to a file and exit.
-  -d DEV, --device DEV  AIE device [phx,stx,telluride]. Default: telluride
+  --dump_layers [<output_file_name>]
+                        Write a text report of the design's layers and exit.
+                        Needs no hardware.
+  -d {phx,stx,telluride,npu3,t20,t10}, --device {phx,stx,telluride,npu3,t20,t10}
+                        Specify device if it can't be detected from aie_dir.
   -o <cxr>, --overlay <cxr>
                         Overlay used by design. Default: 4x4
   -i, --interactive     Launch in Interactive Mode. Default: Batch
   -l <dir>, --output_dir <dir>
-                        Directory to store memory and status dumps. Default: layer_dump
+                        Directory to store memory and status dumps.
+                        Default : layer_dump
   -v <path>, --vaiml_folder_path <path>
                         Specify the VAIML top level folder path.
+                        This overrides aie_dir and buffer_info.
+  -x2 <path>, --x2_folder_path <path>
+                        Specify the X2 top level folder path.
+                        This overrides aie_dir and buffer_info.
   -s, --aie_only        Standalone AIE debug. Work dir can be optionally specified.
+  --load_script <filename>
+                        Execute a Python script in the advanced shell namespace.
   -l3, --l3             Dumps L3 buffers during the execution
-  -f [<flag1>, <flag2> ...], --run_flags [<flag1>, <flag2> ...]
-                        Specify one or more runtime flags for batch mode:
+  --peano               Enable support for peano.
+                        With -v flag, peano support is autodetected.
+  -f [<flag1> <flag2> ...], --run_flags [<flag1> <flag2> ...]
+                        Specify one or more runtime flags:
                         skip_dump       : Do not dump memory
                         l2_ifm_dump     : Dump only L2 IFM buffers
+                        text_dump       : Dump in text format
                         skip_iter       : Skip iterations in batch mode when possible
-                        dump_temps      : Write intermediate (.lst) files to disk
+                        skip_iter2      : skip_iter using lcp lock.(Telluride only)
+                        multistamp      : Enable N Stamp/Batch mode
 ```
 
 ### FAQ
@@ -179,7 +240,7 @@ options:
 1. Any AIE cores in ERROR_HALT
 2. All AIE cores in LOCK_STALL
 3. Any AIE cores in Reset
-4. DM_ADDRESS_OUT_OF_RANGE_CORE is present in events
+4. DM_ADDRESS_OUT_OF_RANGE_CORE is present in event list - points to bad memory access in kernel
 
 #### Mismatch Scenarios
 
@@ -188,9 +249,8 @@ options:
 2. Error bits in SR1/SR2 registers are set
 
 #### FAQ
-1. Hang in conv2d_maxpool: Is caused due to an aiecompiler optimization that cause race condition sometimes. Fix is to rerun aiecompiler with "--multi-layer-lcp-acquire-lock" switch
-2. No L3 dumps for TG layers. This is due to L3 placements and work in progress.
-3. FlexmlRT doesn't halt or env variables can't be set. Use correct command for the shell: 
+1. Debugger Hang in conv2d_maxpool: Is caused due to an aiecompiler optimization that cause race condition sometimes. Fix is to rerun aiecompiler with "--multi-layer-lcp-acquire-lock" switch
+2. FlexmlRT doesn't halt or env variables can't be set. Use correct command for the shell: 
  ```
  # Powershell
  $Env:ENABLE_ML_DEBUG=1
