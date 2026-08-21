@@ -4,26 +4,51 @@
 """
 Text report of the debuggable layers in a design.
 
-Renders LayerInfo.layers as one line per layer so a user can see what the
+Renders LayerInfo.layers as two lines per layer so a user can see what the
 debugger will step through without running it. Kept out of layer_info.py so
 the report can grow without touching metadata parsing.
 
-Columns live in _COLUMNS: add, remove or resize an entry there and the header,
-separator and every row follow.
-"""
+Each layer is one record of two lines: every number on the first, then the two
+names stacked in one text column:
 
-from collections import namedtuple
+    BE_ID #ITERS #STAMPS  MLADF_IDS  BE_LAYER_NAME
+                                     └ KERNEL
+
+The numbers are fixed-width and left of the names, and neither name is capped,
+so a name wider than the terminal costs readability of that name only -- every
+number stays lined up and legible.
+"""
 
 _EMPTY = "-"
 _UNKNOWN = "?"
-_TRUNC_SUFFIX = "..."
-_TRUNC_RESERVE = len(_TRUNC_SUFFIX)
 _SEPARATOR_CHAR = "-"
-_COLUMN_GAP = " "
+
+# Numeric column widths, each sized for its header since those are wider than
+# the values in practice. MLADF_IDS also has to fit a span like "60,79-131".
+_ID_W = 4
+_ITERS_W = 7
+_STAMPS_W = 7
+_MLADF_W = 7
+_GAP = "  "
+# Hangs KERNEL under BE_LAYER_NAME so the second line reads as subordinate.
+_KERNEL_MARK = "└ "
+
+
+def _numbers(be_id, iters, stamps, mladf):
+  """The four numeric columns that open a layer's first line."""
+  return f"{be_id:>{_ID_W}} {iters:>{_ITERS_W}} {stamps:>{_STAMPS_W}} {mladf:>{_MLADF_W}}{_GAP}"
+
+
+_INDENT = " " * len(_numbers("", "", "", ""))
+
+_HEADER = (
+  f"{_numbers('ID', '#ITERS', '#STAMPS', '#MLADF')}LAYER_NAME\n"
+  f"{_INDENT}{_KERNEL_MARK}KERNEL"
+)
 
 _MSG_TITLE = "Debuggable layers: {count}   Overlay: {overlay}"
 _MSG_SUBTITLE = (
-  "Rows are in execution order; BE_ID is the layer id accepted by breakpoints."
+  "Two lines per layer, in execution order; ID is the layer id accepted by breakpoints."
 )
 _MSG_NO_LAYERS = "(no debuggable layers found)"
 _MSG_UNCLAIMED = "{count} mladf layer(s) unmapped: data movement only, nothing to step."
@@ -31,12 +56,6 @@ _MSG_UNCLAIMED_COMPUTE = (
   "{count} mladf layer(s) unmapped but running a kernel: mapping gap, "
   "these cannot be stepped or dumped."
 )
-
-
-def _clip(value, width):
-  """Fit a cell value into width, marking truncated values with a trailing '...'."""
-  text = _EMPTY if value is None or value == "" else str(value)
-  return text if len(text) <= width else text[: width - _TRUNC_RESERVE] + _TRUNC_SUFFIX
 
 
 def _stamp_attr(layer, attr):
@@ -53,22 +72,6 @@ def _mladf_id(design_info, layer):
   return _UNKNOWN if span is None else span
 
 
-_Column = namedtuple("_Column", "label width align value")
-
-# Width 60 on KERNEL fits most mladf kernel names, whose template arguments are
-# what distinguish otherwise identical superkernels.
-_COLUMNS = (
-  _Column("BE_ID", 5, ">", lambda _di, layer: layer.layer_order),
-  _Column("BE_LAYER_NAME", 40, "<", lambda _di, layer: layer.layer_name),
-  _Column("KERNEL", 60, "<", lambda _di, layer: _stamp_attr(layer, "name")),
-  _Column("#ITERS", 6, ">", lambda _di, layer: layer.lcp.num_iter),
-  _Column("#STAMPS", 7, ">", lambda _di, layer: len(layer.stamps)),
-  _Column("MLADF_IDS", 13, ">", _mladf_id),
-)
-
-_HEADER = _COLUMN_GAP.join(f"{c.label:{c.align}{c.width}}" for c in _COLUMNS)
-
-
 def _unclaimed_mladf_counts(design_info):
   """(compute, data-movement) counts of mladf layers no buffer_info layer maps to."""
   report = design_info.mladf_report
@@ -78,18 +81,22 @@ def _unclaimed_mladf_counts(design_info):
   return len(compute), len(other)
 
 
-def _row(design_info, layer):
-  """Format one layer as a table row."""
-  cells = []
-  for col in _COLUMNS:
-    text = _clip(col.value(design_info, layer), col.width)
-    cells.append(f"{text:{col.align}{col.width}}")
-  return _COLUMN_GAP.join(cells)
+def _record(design_info, layer):
+  """The layer's two lines: its numbers and name, then the kernel that runs it."""
+  numbers = _numbers(
+    layer.layer_order, layer.lcp.num_iter, len(layer.stamps), _mladf_id(design_info, layer)
+  )
+  return [
+    f"{numbers}{layer.layer_name or _EMPTY}",
+    f"{_INDENT}{_KERNEL_MARK}{_stamp_attr(layer, 'name') or _EMPTY}",
+  ]
 
 
 def format_layer_report(design_info):
-  """Render every debuggable layer as a text table, in execution order."""
+  """Render every debuggable layer as a two-line record, in execution order."""
   layers = design_info.layers
+  records = [line for layer in layers for line in _record(design_info, layer)]
+
   lines = []
   design = design_info.format_info()
   if design:
@@ -99,14 +106,12 @@ def format_layer_report(design_info):
     _MSG_SUBTITLE,
     "",
     _HEADER,
-    _SEPARATOR_CHAR * len(_HEADER),
+    _SEPARATOR_CHAR * max(len(line) for line in records + _HEADER.split("\n")),
   ]
-  if not layers:
+  if not records:
     lines.append(_MSG_NO_LAYERS)
     return "\n".join(lines)
-
-  for layer in layers:
-    lines.append(_row(design_info, layer))
+  lines += records
 
   unclaimed_compute, unclaimed_dm = _unclaimed_mladf_counts(design_info)
   if unclaimed_dm:
