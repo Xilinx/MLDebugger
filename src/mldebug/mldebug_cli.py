@@ -256,8 +256,7 @@ def app():
     default=None,
   )
   p.add_argument(
-    "--dump-layers",
-    dest="dump_layers",
+    "--dump_layers",
     nargs="?",
     const="-",
     metavar="<output_file_name>",
