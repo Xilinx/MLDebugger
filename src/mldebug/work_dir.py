@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from mldebug.extra.calltree import AIECallTree
+from mldebug.extra.kernel_info import build_kernel_info, build_kernel_info_from_lst
 from mldebug.utils import LOGGER, is_aarch64, is_windows
 
 
@@ -620,7 +621,7 @@ class WorkDir:
         function_name = self.parse_function_sig_llvm(m_fc.group(2))
         start_pc = int(m_fc.group(1), base=16)
         in_func = AIEFunction(function_name, start_pc, 0, 0, False)
-      # end pc — match insn lines only; "ret" in path text (e.g. pretrained) is not an insn
+      # end pc -- match insn lines only; "ret" in path text (e.g. pretrained) is not an insn
       elif self._is_llvm_insn_line(line) and re.search(r"\bret\b", line):
         # functions with multiple returns
         if not in_func:
@@ -659,6 +660,54 @@ class WorkDir:
           if func.start_pc <= pc <= func.end_pc:
             funclist.append(f"{elf}:{func.name}")
     return funclist
+
+  def _find_elf(self, sid, elf_id):
+    """
+    Full ELF directory name for a layer stamp's elf_id, or None when unknown.
+    """
+    # LayerInfo indexes ELFs by the text after 'reloadable', or the core name for the base ELF.
+    return next(
+      (e for e in self.stamps[sid].aie_functions if e.split("reloadable")[-1] == str(elf_id)),
+      None,
+    )
+
+  def _stamp_kernel_info(self, sid, stamp, demangle):
+    """
+    Call tree of one layer stamp's kernel, or None when its ELF cannot supply one.
+    """
+    elf = self._find_elf(sid, stamp.elf_name)
+    if not elf or not stamp.start_pc:
+      return None
+    flist = self.stamps[sid].aie_functions[elf]
+    location = f"stamp {sid} (elf {elf})"
+    # Peano's lld map has no call graph, so its edges come from the disassembly.
+    if self.peano:
+      lst = dict(self.stamps[sid].lst_map).get(elf)
+      if not lst:
+        return None
+      return build_kernel_info_from_lst(lst, stamp.start_pc, flist, location)
+    map_path = Path(self.aie_dir) / "aie" / elf / "Release" / f"{elf}.map"
+    if not map_path.is_file():
+      return None
+    return build_kernel_info(map_path, stamp.start_pc, flist, demangle, location)
+
+  def get_kernel_info(self, layer_stamps):
+    """
+    Call tree of each of a layer's stamps, one KernelInfo per stamp we can resolve.
+    """
+    cache = {}
+
+    def demangle(symbol):
+      if symbol not in cache:
+        cache[symbol] = self._demangle(symbol)
+      return cache[symbol]
+
+    kernels = []
+    for sid, stamp in enumerate(layer_stamps[: self.stamps_per_batch]):
+      kernel = self._stamp_kernel_info(sid, stamp, demangle)
+      if kernel:
+        kernels.append(kernel)
+    return kernels
 
   def print_aie_functions(self, elf_id=None):
     """

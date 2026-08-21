@@ -18,6 +18,8 @@ from mldebug.backend.factory import BackendConfig, create_backend
 from mldebug.batch_runner import BatchRunner
 from mldebug.debug_state import DebugState
 from mldebug.debug_server import DebugServer
+from mldebug.extra.kernel_info import format_kernel_info
+from mldebug.extra.layer_report import format_layer_report
 from mldebug.interactive_controller import InteractiveController
 from mldebug.layer_info import LayerInfo
 from mldebug.memory_dumper import MemoryDumper
@@ -248,22 +250,47 @@ class ClientDebug:
       info_layer = self.state.get_layer_by_order(layer_order)
       if info_layer:
         print(f"{sep}\nInformation on layer: {layer_order}\n{sep}")
-        print(info_layer)
+        print(f"#Iterations: {info_layer.lcp.num_iter}")
+        print(info_layer.format_stamps())
+        self.print_kernel_functions(info_layer)
         print(sep)
       else:
         print(f"Layer not found: {layer_order}. Note: TG Layers aren't supported.")
       return
 
-    self.design_info.print_info()
     if self.args.aie_only:
       return
 
     layer = self.state.get_current_layer()
     if layer:
-      stamp_names = ", ".join([f"Stamp {i}: {stamp.name}" for i, stamp in enumerate(layer.stamps)])
-      LOGGER.log(f"Stopped at Start of Kernel(s): {stamp_names}")
-      LOGGER.log(f"Current Layer: {layer.layer_order}, Iteration: {self.state.cur_it}")
-      LOGGER.log(str(layer))
+      LOGGER.log(
+        f"Current Layer: {layer.layer_order}, Current Iteration: {self.state.cur_it}, "
+        f"#Iterations: {layer.lcp.num_iter}"
+      )
+      LOGGER.log(f"Stopped at Start of Kernel(s):\n{layer.format_stamps()}")
+      self.print_kernel_functions(layer)
+
+  def print_kernel_functions(self, layer):
+    """
+    Print the subfunction call tree of a TG layer's kernel; other layers have none.
+    """
+    if not layer.lcp.is_tg:
+      return
+    kernels = self.design_info.work_dir.get_kernel_info(layer.stamps)
+    if kernels:
+      LOGGER.log(format_kernel_info(kernels))
+
+  def dump_layers(self, filename=None):
+    """
+    Print a text report of every debuggable layer, or write it to filename.
+    """
+    report = format_layer_report(self.design_info)
+    if not filename:
+      print(report)
+      return
+    with open(filename, "w", encoding="utf-8") as fd:
+      fd.write(report + "\n")
+    print(f"[INFO] Layer report written to {filename}")
 
   def read_lcp(self, col=None, row=None, ping=1):
     """

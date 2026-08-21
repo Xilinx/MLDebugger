@@ -75,7 +75,13 @@ def check_args(args):
   Side Effects:
       Prints user warnings or messages about argument handling.
   """
-  if args.dump_aie_status:
+  if args.dump_layers:
+    # The report is built purely from build metadata, so avoid XRT entirely.
+    args.interactive = False
+    args.aie_only = False
+    args.backend = "test"
+    print("[INFO] Dumping layer report and exiting (no hardware access)")
+  elif args.dump_aie_status:
     args.interactive = False
     args.aie_only = True
     print("[INFO] Dumping advanced AIE status and exiting (non-interactive)")
@@ -165,6 +171,9 @@ def launch_debug(args, output_dir):
   # Top debug handle
   _apply_unsupported_kernels_from_args(args)
   handle = ClientDebug(args, context_id, pid, output_dir)
+  if args.dump_layers:
+    handle.dump_layers(None if args.dump_layers == "-" else args.dump_layers)
+    return
   if args.dump_aie_status:
     handle.status_handle.get(args.dump_aie_status, advanced=True, guidance=False)
     print(f"[INFO] Advanced AIE status written to {args.dump_aie_status}")
@@ -244,6 +253,15 @@ def app():
     dest="dump_aie_status",
     metavar="<output_file_name>",
     help="Write AIE status to a file and exit.\n",
+    default=None,
+  )
+  p.add_argument(
+    "--dump_layers",
+    nargs="?",
+    const="-",
+    metavar="<output_file_name>",
+    help="Write a text report of the design's layers and exit.\n"
+    "Prints to stdout when no file is given. Needs no hardware.\n",
     default=None,
   )
   # Hidden Argument
@@ -415,7 +433,7 @@ def app():
       check_registry_keys(args, args.device == AIE_DEV_NPU3)
       registry_checked = True
     debug(args, timestamp, subgraph_name, fsp, model_folder_name)
-    if args.dump_aie_status:
+    if args.dump_aie_status or args.dump_layers:
       break
 
   # End Debug

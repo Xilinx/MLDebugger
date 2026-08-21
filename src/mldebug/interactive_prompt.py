@@ -111,6 +111,7 @@ DIRECT AIE CONTROL FUNCTIONS
     if not aie_only:
       help_text += """
 LAYER BASED AIE CONTROL FUNCTIONS (-b or -v or -x2 flags required)
+  dump_layers(filename=None): Print or dump all debuggable layers of the design
   dump_buffers()            : Dump AIE Buffers at current state
   step_it()                 : Step to next Iteration
   step_layer()              : Step to next Layer
@@ -126,6 +127,7 @@ LAYER BASED AIE CONTROL FUNCTIONS (-b or -v or -x2 flags required)
     step_it = h.step_iter_manual
     cont = h.continue_execution
     dump_buffers = h.dump_memory
+    dump_layers = h.dump_layers
     dump_l3 = h.dump_l3_buffers_manual
     rmem = h.impl.dump_memory
     rreg = h.impl.read_register
@@ -228,6 +230,8 @@ Available Commands in Interactive Mode
 INFORMATION COMMANDS
   h/help         :    Print this Message
   i/info <Layer> :    Print current state of Execution
+  layers <file>  :    Print all debuggable layers of the design
+                      Specify optional Filename
 AIE INSPECTION COMMANDS
   a/aie_status  <filename>      :    Print Status for : AIE, Memory and Interface Tiles
                                      Specify optional Filename
@@ -266,6 +270,13 @@ MISC COMMANDS
           h.print_current_state(layer_order=int(cmd[1]))
         else:
           h.print_current_state()
+      elif c in ["layers"]:
+        if nargs == 1:
+          h.dump_layers()
+        elif nargs == 2:
+          h.dump_layers(cmd[1])
+        else:
+          print("Unrecognized Parameters. Use h/help")
       elif c in ["a", "aie_status"]:
         if nargs == 1:
           h.status_handle.get()

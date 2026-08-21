@@ -249,8 +249,8 @@ class AIECallTree:
       connector = ""
       new_prefix = ""
     else:
-      connector = "└── " if is_last else "├── "
-      new_prefix = prefix + ("    " if is_last else "│   ")
+      connector = "|-- "
+      new_prefix = prefix + ("    " if is_last else "|   ")
 
     tail_marker = " [tail-call]" if node.is_tail_call else ""
     func_display = f"{node.func_name} (0x{node.pc:x}){tail_marker}"
@@ -335,8 +335,8 @@ class AIECallTree:
 
     for root_addr in root_addrs:
       root_name = self._addr_to_name.get(root_addr, f"<0x{root_addr:x}>")
-      output.append(f"\n┌─ Call tree for: {root_name}")
-      output.append("│")
+      output.append(f"\n+- Call tree for: {root_name}")
+      output.append("|")
 
       tree = self._build_call_tree(root_addr)
       output.append(self._visualize_tree(tree))
@@ -362,11 +362,11 @@ class AIECallTree:
         lines.append(f"\n{func.name} (0x{addr:x}):")
         for call_pc, target in func.calls:
           target_name = self._addr_to_name.get(target, f"<unknown@0x{target:x}>")
-          lines.append(f"  ├─ calls {target_name} at PC 0x{call_pc:x}")
+          lines.append(f"  |- calls {target_name} at PC 0x{call_pc:x}")
         if func.tail_jump_target and func.tail_jump_target in self._addr_to_name:
           target_name = self._addr_to_name[func.tail_jump_target]
           if not target_name.startswith("."):
-            lines.append(f"  └─ tail-calls {target_name}")
+            lines.append(f"  |- tail-calls {target_name}")
 
     return "\n".join(lines)
 

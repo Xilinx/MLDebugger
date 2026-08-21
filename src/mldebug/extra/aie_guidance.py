@@ -479,7 +479,7 @@ class AIEGuidanceChecker:
 
         # Show guidance and values if requested and failed
         if show_guidance and not result.passed:
-          print(f"         | {'':10} | {'':35} | → {result.guidance}")
+          print(f"         | {'':10} | {'':35} | -> {result.guidance}")
           if result.actual_value is not None:
             print(
               f"         | {'':10} | {'':35} |   Actual: {result.actual_value}, Expected: {result.expected_value}"
