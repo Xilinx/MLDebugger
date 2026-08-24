@@ -22,6 +22,7 @@ from mldebug.arch import (
   AIE_DEV_PHX,
   AIE_DEV_STX,
   AIE_DEV_TEL,
+  DEVICE_CONFIGS,
 )
 from mldebug.backend.core_dump_impl import CoreDumpFallbackReader
 from mldebug.backend.factory import BackendConfig, create_backend
@@ -99,6 +100,7 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     args.subgraph_name = None
 
   set_device(args)
+  set_coredump_overlay(args)
   set_aie_scc(args, subgraph_path)
 
   # Metadata check
@@ -333,6 +335,38 @@ def set_device(args) -> None:
   if args.sub_device != args.device:
     print(f"[INFO] Detected sub-device: {args.sub_device} (base {args.device}).")
   print(f"[INFO] Using AIE Device: {args.device}.", end=endmsg)
+
+
+def set_coredump_overlay(args) -> None:
+  """
+  Size the overlay to a core dump: columns are probed from the file, rows come
+  from the device's core-tile count.
+
+  Only runs for core dumps when the user did not pass -o. Must be called after
+  ``set_device``, which resolves the device and ``args.no_header``.
+  """
+  if not getattr(args, "core_dump", None) or args.overlay:
+    return
+
+  dev_name = getattr(args, "sub_device", None) or args.device
+  try:
+    reader = CoreDumpFallbackReader(
+      args.core_dump, dev_name, no_header=getattr(args, "no_header", False)
+    )
+    ncols = reader.detect_num_cols()
+  except (ValueError, OSError, RuntimeError) as e:
+    print(f"[WARNING] Could not detect core dump columns: {e}")
+    return
+
+  if ncols < 1:
+    print("[WARNING] Core dump has no readable columns. Keeping the default overlay.")
+    return
+
+  # Overlay rows count core tiles only; shim/memtile rows are added back by Overlay.
+  cfg = DEVICE_CONFIGS[dev_name]
+  nrows = cfg["numrows"] - cfg["core_row_start"]
+  args.overlay = f"{ncols}x{nrows}"
+  print(f"[INFO] Core dump contains {ncols} column(s). Using overlay {args.overlay}.")
 
 
 def print_hw_context_table(current_contexts: dict[str, dict[str, str]]) -> None:
