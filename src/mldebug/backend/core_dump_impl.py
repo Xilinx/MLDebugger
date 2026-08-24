@@ -44,6 +44,7 @@ class CoreDumpFallbackReader:
 
     self.metadata = DEVICE_CONFIGS[self.dev_name]
     self.header_size = 256  # Default header size
+    self.total_cols = 0  # Column count from the header; 0 when there is no header
 
     # Open the binary dump file
     if not Path(self.filename).exists():
@@ -134,7 +135,7 @@ class CoreDumpFallbackReader:
 
   def _parse_header(self):
     """
-    Parse the core dump file header to learn header_size.
+    Parse the core dump file header to learn header_size and total_cols.
 
     Device detection is handled earlier (see ``peek_device`` and
     ``set_device``); this only validates the magic number and reads the
@@ -169,6 +170,11 @@ class CoreDumpFallbackReader:
         raise ValueError(
           f"Invalid header size in core dump: {self.header_size} bytes (expected 18-1048576)"
         )
+
+      # hwGen, coreRowStart, memRowStart, memTileRows, totalNumRows, totalNumCols
+      geometry = self.file_handle.read(6)
+      if len(geometry) == 6:
+        self.total_cols = geometry[5]
 
     except (ValueError, RuntimeError) as e:
       raise ValueError("I/O error while reading core dump header") from e
@@ -222,7 +228,7 @@ class CoreDumpFallbackReader:
     file_position = self.header_size + tile_pos_index + offset
     return file_position
 
-  def read_register(self, col, row, offset):
+  def read_register(self, col, row, offset, strict=False):
     """
     Read a 32-bit register from the core dump file
 
@@ -230,6 +236,7 @@ class CoreDumpFallbackReader:
       col (int): Column index
       row (int): Row index
       offset (int): Register offset
+      strict (bool): Raise on read failure instead of returning 0
 
     Returns:
       int: 32-bit register value
@@ -255,8 +262,28 @@ class CoreDumpFallbackReader:
       return value
 
     except Exception as e:
+      if strict:
+        raise
       print(f"[ERROR] Failed to read register at col={col}, row={row}, offset=0x{offset:x}: {e}")
       return 0
+
+  def detect_num_cols(self):
+    """
+    Return the number of columns captured in the core dump.
+
+    Reads the same register in successive columns until the read raises,
+    bounded by the header's column count (the device's, when the header
+    carried none).
+    """
+    max_cols = self.total_cols or self.metadata["numcols"]
+    # Probe the last row so a column only counts when its whole tower is present.
+    row = self.metadata["numrows"] - 1
+    for col in range(max_cols):
+      try:
+        self.read_register(col, row, 0, strict=True)
+      except (ValueError, RuntimeError, OSError):
+        return col
+    return max_cols
 
   def dump_buffer(self, col, row, offset, size):
     """
