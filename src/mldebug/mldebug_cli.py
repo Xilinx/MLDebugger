@@ -224,7 +224,7 @@ def app():
     "--version",
     action="version",
     version=version_string(),
-    help="Show version and the commit this build came from, then exit.\n",
+    help="Show version, commit ID and exit.\n",
   )
   p.add_argument(
     "-b",
