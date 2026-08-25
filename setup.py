@@ -13,6 +13,7 @@ import subprocess
 
 from setuptools import setup
 from setuptools.command.build_py import build_py
+from setuptools.command.sdist import sdist
 
 ROOT = Path(__file__).parent.resolve()
 
@@ -37,20 +38,26 @@ def _commit():
   commit = _git("rev-parse", "HEAD") or os.environ.get("GITHUB_SHA", "")
   if not commit:
     return ""
-  # Scoped to *.py: the LFS binaries under bin/ and backend/ routinely show as
-  # modified after a smudge, which would mark every build dirty.
-  if _git("status", "--porcelain", "--", "*.py"):
+  # Scoped to tracked *.py: the LFS binaries under bin/ and backend/ show as modified
+  # after a smudge, and sdist leaves an untracked copy of the tree behind while it runs.
+  if _git("status", "--porcelain", "-uno", "--", "*.py"):
     commit += "-dirty"
   return commit
 
 
-def _write_stamp(build_lib, version):
+def _write_stamp(stamp, version):
   """
-  Overwrite mldebug/_build_info.py in the build tree with the version and commit.
+  Write _build_info.py, or keep the existing one when the commit is unknown.
+  An unknown commit means we are building from an sdist, which already carries
+  the stamp written when the sdist itself was built.
   """
   commit = _commit()
-  stamp = Path(build_lib) / "mldebug" / "_build_info.py"
+  if not commit:
+    print(f"[WARNING] no git commit found, leaving {stamp} as is")
+    return
   build_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+  # sdist hard links files out of the source tree, so replace instead of writing in place.
+  stamp.unlink(missing_ok=True)
   stamp.write_text(
     '"""Generated at build time by setup.py."""\n\n'
     f'VERSION = "{version}"\n'
@@ -68,7 +75,19 @@ class BuildPyStamped(build_py):
 
   def run(self):
     super().run()
-    _write_stamp(self.build_lib, self.distribution.get_version())
+    stamp = Path(self.build_lib) / "mldebug" / "_build_info.py"
+    _write_stamp(stamp, self.distribution.get_version())
 
 
-setup(cmdclass={"build_py": BuildPyStamped})
+class SdistStamped(sdist):
+  """
+  Stamp the sdist so a wheel built from it keeps the commit.
+  """
+
+  def make_release_tree(self, base_dir, files):
+    super().make_release_tree(base_dir, files)
+    stamp = Path(base_dir) / "src" / "mldebug" / "_build_info.py"
+    _write_stamp(stamp, self.distribution.get_version())
+
+
+setup(cmdclass={"build_py": BuildPyStamped, "sdist": SdistStamped})
