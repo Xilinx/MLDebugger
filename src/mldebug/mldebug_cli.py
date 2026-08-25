@@ -31,7 +31,7 @@ from mldebug.input_parser import (
   create_run_flags,
 )
 from mldebug.interactive_prompt import InteractivePrompt
-from mldebug.utils import setup_logger, close_logger, is_windows
+from mldebug.utils import LOGGER, setup_logger, close_logger, is_windows, version_string
 
 
 def _apply_unsupported_kernels_from_args(args):
@@ -220,6 +220,12 @@ def app():
   top_msg = "AIE Debug for VAIML.\nDefault data dump mode is binary. Files have 8byte header specifying total bytes."
   p = argparse.ArgumentParser(description=top_msg, formatter_class=RawTextHelpFormatter)
 
+  p.add_argument(
+    "--version",
+    action="version",
+    version=version_string(),
+    help="Show version, commit ID and exit.\n",
+  )
   p.add_argument(
     "-b",
     "--buffer_info",
@@ -410,6 +416,7 @@ def app():
   )
   args = p.parse_args()
   setup_logger(args)
+  LOGGER.log(f"[INFO] {version_string()}")
 
   if not check_args(args):
     print("Argument check failed")

@@ -5,13 +5,14 @@
 Helpful utilities like logging
 """
 
-from pathlib import Path
-
 import os
 import platform
 import sys
 import threading
 import time
+from pathlib import Path
+
+from mldebug import _build_info
 
 
 class Logger:
@@ -104,6 +105,18 @@ def close_logger():
   Finalize and close the global Logger.
   """
   LOGGER.close()
+
+
+def version_string():
+  """
+  One line banner: version, commit and build date of the installed package.
+  """
+  if not _build_info.COMMIT:
+    return "mldebug (running from source, no build stamp)"
+  return (
+    f"mldebug {_build_info.VERSION} (commit {_build_info.COMMIT})"
+    f" built {_build_info.BUILD_DATE}"
+  )
 
 
 class Version:
