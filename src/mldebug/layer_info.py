@@ -57,6 +57,7 @@ SIZE_BYTES = {
   "float16": 2,
   "int8_t": 1,
   "uint8_t": 1,
+  "int16_t": 2,
   "uint16": 1,  # Size of x2 designs is already in bytes
   "uint16_t": 2,
 }
