@@ -4,10 +4,9 @@
 # Packages VAIProfile inputs from a hardware run directory into vai_profile.zip (top-level files only),
 # then moves collected files into vai_profile_data (or vai_profile_data_<n> if the name exists).
 # Collects: aie_event_runtime_config_ctx_<id>_run_<id>.json, aie_trace_ctx_*_run_*_inf_*_strm_*.txt,
-# dtrace_dump_ctx*.py, aie_dtrace_*.ct, dtrace_dump_*.json,
-# record_timer_*.json (incl. record_timer_inference_*, record_timer_ts*, etc.),
+# dtrace_dump_ctx*.py, record_timer_*.json (incl. record_timer_inference_*, record_timer_ts*, etc.),
 # onnxruntime_profile_*.json.
-# vai_profile.zip remains at the run directory root (or vai_profile_<n>.zip if the name already exists).
+# vai_profile.zip remains at the run directory root.
 # Usage: vaiprofile-collect-data <hardware_run_directory>
 # Requires: zip (Info-ZIP) on PATH.
 
@@ -53,12 +52,6 @@ done
 for f in dtrace_dump_ctx*.py; do
   files+=("$f")
 done
-for f in aie_dtrace_*.ct; do
-  files+=("$f")
-done
-for f in dtrace_dump_*.json; do
-  files+=("$f")
-done
 for f in record_timer_*.json; do
   files+=("$f")
 done
@@ -75,19 +68,17 @@ if ((${#files[@]} == 0)); then
   exit 1
 fi
 
-# Pick a single index shared by vai_profile_<n>.zip and vai_profile_data_<n>,
-# so the zip and its extracted data directory always use the same suffix.
 out="${root}/vai_profile.zip"
-profile_dir="${root}/vai_profile_data"
-if [[ -e "$out" || -e "$profile_dir" ]]; then
-  n=1
-  while [[ -e "${root}/vai_profile_${n}.zip" || -e "${root}/vai_profile_data_${n}" ]]; do
-    ((n++)) || true
-  done
-  out="${root}/vai_profile_${n}.zip"
-  profile_dir="${root}/vai_profile_data_${n}"
-fi
+rm -f "$out"
 zip -j -q "$out" -- "${files[@]}"
 
+profile_dir="${root}/vai_profile_data"
+if [[ -e "$profile_dir" ]]; then
+  n=1
+  while [[ -e "${root}/vai_profile_data_${n}" ]]; do
+    ((n++)) || true
+  done
+  profile_dir="${root}/vai_profile_data_${n}"
+fi
 mkdir -p "$profile_dir"
 mv -- "${files[@]}" "$profile_dir/"
