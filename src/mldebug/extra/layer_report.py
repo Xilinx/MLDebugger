@@ -17,6 +17,11 @@ names stacked in one text column:
 The numbers are fixed-width and left of the names, and neither name is capped,
 so a name wider than the terminal costs readability of that name only -- every
 number stays lined up and legible.
+
+A layer boundary that swaps program memory gets one extra line naming the
+replicas that reload, followed by the ELF every replica runs once execution
+resumes, in replica order. Together they say where the runner re-arms
+breakpoints and in which ELF.
 """
 
 _EMPTY = "-"
@@ -31,6 +36,11 @@ _MLADF_W = 7
 _GAP = "  "
 # Hangs KERNEL under LAYER_NAME so the second line reads as subordinate.
 _KERNEL_MARK = "|-- "
+# Marks the reload line so it does not read as another layer.
+_RELOAD_MARK = "********    PM_RELOAD"
+_MSG_RELOAD = " STAMP_{sid}"
+# Closes the reload line with the ELF every stamp runs next, in stamp order.
+_MSG_ACTIVE_ELFS = "    ********    ACTIVE ELFS: {elfs}"
 
 
 def _numbers(be_id, iters, stamps, mladf):
@@ -80,21 +90,75 @@ def _unclaimed_mladf_counts(design_info):
   return len(compute), len(other)
 
 
-def _record(design_info, layer):
-  """The layer's two lines: its numbers and name, then the kernel that runs it."""
+def _reload_target(design_info, idx, sid):
+  """The layer replica `sid` runs next after layer `idx`, or None if there is none."""
+  layers = design_info.layers
+  if design_info.overlay.is_leftmost_in_batch(sid):
+    return layers[idx + 1]
+  for layer in layers[idx + 1 :]:
+    if layer.runs_replica(sid):
+      return layer
+  return None
+
+
+def _active_elf(design_info, idx, sid):
+  """ELF replica `sid` runs once execution resumes past layer `idx`; '-' when it has none."""
+  target = _reload_target(design_info, idx, sid)
+  if target is None or not target.runs_replica(sid):
+    return _EMPTY
+  elf = target.get_stamp(sid).elf_name
+  return _EMPTY if elf is None or elf == "" else str(elf)
+
+
+def _reload_stamps(design_info, idx):
+  """Replicas whose program memory reloads after layer `idx`, in replica order.
+
+  Mirrors BatchRunner.check_pm_reload so the report names the same replicas the
+  runner will log a PM reload for.
+  """
+  layers = design_info.layers
+  if idx + 1 >= len(layers):
+    return []
+  stamps = []
+  for sid in design_info.overlay.get_stampids():
+    if not design_info.work_dir.stamp(sid).pm_reload_en:
+      continue
+    if not layers[idx].runs_replica(sid):
+      continue
+    target = _reload_target(design_info, idx, sid)
+    if target is None or not target.runs_replica(sid):
+      continue
+    if layers[idx].get_stamp(sid).elf_name != target.get_stamp(sid).elf_name:
+      stamps.append(sid)
+  return stamps
+
+
+def _record(design_info, idx):
+  """The layer's lines: its numbers and name, the kernel that runs it, and any reload."""
+  layer = design_info.layers[idx]
   numbers = _numbers(
     layer.layer_order, layer.lcp.num_iter, len(layer.stamps), _mladf_id(design_info, layer)
   )
-  return [
+  lines = [
     f"{numbers}{layer.layer_name or _EMPTY}",
     f"{_INDENT}{_KERNEL_MARK}{_stamp_attr(layer, 'name') or _EMPTY}",
   ]
+  stamps = _reload_stamps(design_info, idx)
+  if stamps:
+    reloads = ", ".join(_MSG_RELOAD.format(sid=sid) for sid in stamps)
+    active = ", ".join(
+      _active_elf(design_info, idx, sid) for sid in design_info.overlay.get_stampids()
+    )
+    # Separate entries, not one embedded-newline string, so the report's
+    # separator stays sized off real line widths.
+    lines += ["", f"{_RELOAD_MARK}{reloads:<60}{_MSG_ACTIVE_ELFS.format(elfs=active)}", ""]
+  return lines
 
 
 def format_layer_report(design_info):
   """Render every debuggable layer as a two-line record, in execution order."""
   layers = design_info.layers
-  records = [line for layer in layers for line in _record(design_info, layer)]
+  records = [line for idx in range(len(layers)) for line in _record(design_info, idx)]
 
   lines = []
   design = design_info.format_info()

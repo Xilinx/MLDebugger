@@ -151,7 +151,17 @@ mldebug -v ./resnet18 --dump_layers layers.txt
 --------------------------------------------------------------
    1       1       1       1  /Gather
                               |-- mllib_graphs::concat_adf_wrapper<bfloat16>
+
+       *********************        PM_RELOAD STAMP_0,  STAMP_1  ACTIVE ELFS: 1, 1, 0
+
+   2       1       1       2  /Concat
+                              |-- mllib_graphs::concat_adf_wrapper<bfloat16>
 ```
+
+A "PM_RELOAD" banner marks a layer boundary where program memory is swapped
+and names the stamps that switch to a new ELF. "ACTIVE ELFS" then lists, in
+stamp order, the ELF every stamp runs once execution resumes, so "-" means that
+stamp has no layers left to run.
 
 ### Inspecting a TG Layer's Kernel
 
