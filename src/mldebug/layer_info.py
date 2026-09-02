@@ -266,7 +266,8 @@ class Layer:
       num_batches (int): Number of batches (B from BxSxCxR overlay). Each
         batch is a data-parallel copy of the per-batch stamps; defaults to 1.
       device_batch_size (int): buffer_info's device_batch_size, before any
-        single-replica collapse. Gates the mladf stamp-count correction.
+        single-replica collapse. Converts buffer_info's all-batch replica
+        counts into per-batch stamp counts.
     """
     self.flexml_ids = []
     self.l3_ifm_buffers = []
@@ -298,14 +299,16 @@ class Layer:
       return
 
     n_stamps = info.get("no_of_stamps")
+    # buffer_info counts replicas across every batch; stamps here are per-batch.
+    if n_stamps and device_batch_size > 1:
+      n_stamps = max(1, n_stamps // device_batch_size)
     # buffer_info's no_of_stamps is sometimes wrong and mladf is authoritative
-    # TBD: it details only one batch replica, make it work with nBnS mode
-    if mladf_report and device_batch_size == 1 and num_stamps > 1:
+    if mladf_report and num_stamps > 1:
       # None or 0 means mladf could not answer; fall back to buffer_info.
       true_n = mladf_report.get_running_stamp_count(self.layer_order, num_stamps, self.mladf_ids)
       if true_n and n_stamps and true_n != n_stamps:
         LOGGER.log(
-          f"[WARNING] Layer {self.layer_order}: buffer_info no_of_stamps={n_stamps} "
+          f"[WARNING] Layer {self.layer_order}: buffer_info stamps/batch={n_stamps} "
           f"disagrees with mladf ({true_n}); using {true_n}."
         )
       n_stamps = true_n or n_stamps
@@ -858,7 +861,7 @@ class LayerInfo:
       .meta.device_batch_size -> B (number of data-parallel batch copies)
       .meta.max_stamps_used   -> S (per-batch stamps actually used; may be
                                    smaller than stamps_in_overlay). Falls
-                                   back to max(no_of_stamps) across layers,
+                                   back to max(no_of_stamps)/B across layers,
                                    then to the layout's stamp count.
 
     Args:
@@ -888,7 +891,10 @@ class LayerInfo:
 
     if not stamps:
       if data.get("layers"):
-        stamps = max(lyr.get("no_of_stamps", 1) for _, lyr in data["layers"].items())
+        # no_of_stamps counts replicas across every batch, so scale it down to
+        # one batch to get S.
+        widest = max(lyr.get("no_of_stamps", 1) for _, lyr in data["layers"].items())
+        stamps = max(1, widest // batches)
       else:
         stamps = overlay_stamps
 
