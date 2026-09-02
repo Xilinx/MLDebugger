@@ -576,7 +576,7 @@ class LayerInfo:
       )
     # 4. Initialize Layers
     if not args.aie_only:
-      self._init_layers(data, args.aie_iface, num_stamps, num_batches)
+      self._init_layers(data, args.aie_iface, num_stamps, num_batches, args.unsupported_layers)
     # 5: Parse work dir
     if self.x2:
       for layer in self.layers:
@@ -898,7 +898,7 @@ class LayerInfo:
     self.x2 = data[".meta"].get("flow") == "x2"
     return data
 
-  def _init_layers(self, raw_info, aie_iface, num_stamps, num_batches=1):
+  def _init_layers(self, raw_info, aie_iface, num_stamps, num_batches = 1, skip_layers=None):
     """
     Parse all layer entries from metadata and populate self.layers.
 
@@ -907,6 +907,7 @@ class LayerInfo:
         aie_iface: AIE interface object.
         num_stamps (int): Stamps per batch (S from BxSxCxR).
         num_batches (int): Number of batches (B from BxSxCxR).
+        skip_layers (set[int]): layer_order values to skip (from --unsupported_layer).
     """
     version = Version.from_string(raw_info[".meta"]["version"])
     size_shift = raw_info[".meta"].get("size_shift")
@@ -924,18 +925,20 @@ class LayerInfo:
     for entry in raw_layers:
       info = entry[1]
       self._warn_if_scheduled_in_chunks(info)
-      self.layers.append(
-        Layer(
-          info,
-          size_shift,
-          version,
-          aie_iface,
-          num_stamps,
-          self.mladf_report,
-          num_batches=num_batches,
-          device_batch_size=self.layout[0],
-        )
+      layer = Layer(
+        info,
+        size_shift,
+        version,
+        aie_iface,
+        num_stamps,
+        self.mladf_report,
+        num_batches=num_batches,
+        device_batch_size=self.layout[0],
       )
+      if skip_layers and layer.layer_order in skip_layers:
+        LOGGER.verbose_print(f"[WARNING] unsupported layer {layer.layer_order} will be skipped.")
+        layer.is_unsupported = True
+      self.layers.append(layer)
     self._reorder_layers_by_execution()
 
   def _warn_if_scheduled_in_chunks(self, info):
