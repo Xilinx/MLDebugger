@@ -31,8 +31,8 @@ unsupported_superkernels = [
   # Padding preamble; halting on it desyncs PC/iteration stepping on HW
   "buffer_pad_innermost",
   "superkernel_conv_eltbinary",
-  # TODO: investigate why this is causing a failure (ref: https://jira.xilinx.com/browse/AIESW-43386)
-  "mllib_graphs::topk_adf_wrapper",
+  # TODO: investigate why this is causing a failure (ref: AIESW-43386)
+  "mllib_graphs::transpose4d_adf_wrapper<signed char>",
 ]
 
 
