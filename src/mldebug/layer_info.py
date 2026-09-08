@@ -31,8 +31,10 @@ unsupported_superkernels = [
   # Padding preamble; halting on it desyncs PC/iteration stepping on HW
   "buffer_pad_innermost",
   "superkernel_conv_eltbinary",
-  # TODO: investigate why this is causing a failure (ref: AIESW-43386)
+  # TODO: investigate why this is causing a failure (ref: AIESW-43867)
+  "mllib_graphs::topk_adf_wrapper",
   "mllib_graphs::transpose4d_adf_wrapper<signed char>",
+  "mllib_graphs::transpose4d_adf_wrapper<bfloat16>",
 ]
 
 
