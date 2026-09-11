@@ -58,7 +58,28 @@ def _apply_unsupported_kernels_from_args(args):
       if token:
         layer_info.unsupported_superkernels.append(token.lower())
 
-
+def _apply_unsupported_layers_from_args(args):
+  """
+  Parse --unsupported_layer into args.unsupported_layers (set of layer_order ints).
+  Supports both:
+    --unsupported_layer 285 286
+  and:
+    --unsupported_layer 285,286
+  """
+  values = args.unsupported_layers
+  if not values:
+    args.unsupported_layers = set()
+    return
+  skip_layers = set()
+  for v in values:
+    if v is None:
+      continue
+    for token in str(v).split(","):
+      token = token.strip()
+      if token:
+        skip_layers.add(int(token))
+  args.unsupported_layers = skip_layers
+  
 def check_args(args):
   """
   Check argument rules
@@ -170,6 +191,7 @@ def launch_debug(args, output_dir):
     context_id, pid = check_hw_context(args)
   # Top debug handle
   _apply_unsupported_kernels_from_args(args)
+  _apply_unsupported_layers_from_args(args)
   handle = ClientDebug(args, context_id, pid, output_dir)
   if args.dump_layers:
     handle.dump_layers(None if args.dump_layers == "-" else args.dump_layers)
@@ -379,6 +401,16 @@ def app():
     help=argparse.SUPPRESS,
     # help="Additional kernel names to treat as unsupported and skip during execution.\n"
     # "Example: --unsupported_kernels conv2d_maxpool superkernel_clip1d\n",
+  )
+  p.add_argument(
+    "--unsupported_layer",
+    dest="unsupported_layers",
+    nargs="*",
+    default=None,
+    metavar="LAYER",
+    help=argparse.SUPPRESS,
+    #help="Layer numbers to skip during execution.\n"
+    #"Example: --unsupported_layer 285 286\n",
   )
   p.add_argument(
     "-f",
