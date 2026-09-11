@@ -422,7 +422,7 @@ class BatchRunner:
           self.state.error = True
           break
 
-    if sid == 0:
+    if sid == 0 and not self.args.run_flags.skip_iter2:
       self.dumper.dump_l3_buffers(layer)
     return not self.state.error
 
