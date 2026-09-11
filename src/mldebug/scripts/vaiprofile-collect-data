@@ -4,7 +4,8 @@
 # Packages VAIProfile inputs from a hardware run directory into vai_profile.zip (top-level files only),
 # then moves collected files into vai_profile_data (or vai_profile_data_<n> if the name exists).
 # Collects: aie_event_runtime_config_ctx_<id>_run_<id>.json, aie_trace_ctx_*_run_*_inf_*_strm_*.txt,
-# dtrace_dump_ctx*.py, record_timer_*.json (incl. record_timer_inference_*, record_timer_ts*, etc.),
+# dtrace_dump_ctx*.py, dtrace_dump_ctx*.json, aie_dtrace_ctx*.ct,
+# record_timer_*.json (incl. record_timer_inference_*, record_timer_ts*, etc.),
 # onnxruntime_profile_*.json.
 # vai_profile.zip remains at the run directory root.
 # Usage: vaiprofile-collect-data <hardware_run_directory>
@@ -47,6 +48,12 @@ for f in aie_event_runtime_config*.json; do
   files+=("$f")
 done
 for f in aie_trace*.txt; do
+  files+=("$f")
+done
+for f in dtrace_dump_ctx*.json; do
+  files+=("$f")
+done
+for f in aie_dtrace_ctx*.ct; do
   files+=("$f")
 done
 for f in dtrace_dump_ctx*.py; do
