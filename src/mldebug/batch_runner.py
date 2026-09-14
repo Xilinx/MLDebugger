@@ -351,7 +351,9 @@ class BatchRunner:
     # L3 buffer dump: X2 dumps at first iteration, VAIML at last iteration
     if self.args.x2_folder_path is not None and first_it and sid == 0:
       self.dumper.dump_x2_buffers(layer, it)
-    elif self.args.vaiml_folder_path is not None and it == layer.lcp.num_iter and sid == 0:
+    elif self.args.vaiml_folder_path is not None and sid == 0 and (
+     it == layer.lcp.num_iter or self.args.run_flags.skip_iter2
+    ):
       self.dumper.dump_l3_buffers(layer)
 
     if self.args.run_flags.skip_dump:
