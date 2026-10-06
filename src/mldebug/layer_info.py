@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mldebug.aie_overlay import Overlay
+from mldebug.arch.device_configs import AIE_DEV_PHX, AIE_DEV_STX
 from mldebug.mladf_report import MladfReport
 from mldebug.work_dir import _parse_flexml_layer_id
 from mldebug.work_dir import WorkDir
@@ -26,16 +27,37 @@ unsupported_superkernels = [
   "mllib_graphs::resize_adf_wrapper",
   # This has many sublayers and needs to be better understood
   "mllib_graphs::mha_type1::mha_adf_wrapper",
-  # Causes failure. TODO: investigate
-  "superkernel_eltunary",
   # Padding preamble; halting on it desyncs PC/iteration stepping on HW
   "buffer_pad_innermost",
-  "superkernel_conv_eltbinary",
   # TODO: investigate why this is causing a failure (ref: AIESW-43867)
   "mllib_graphs::topk_adf_wrapper",
   "mllib_graphs::transpose4d_adf_wrapper<signed char>",
   "mllib_graphs::transpose4d_adf_wrapper<bfloat16>",
 ]
+
+# Kernels that work on PHX/STX but are unsupported on other devices.
+# Causes failure on other devices. TODO: investigate
+phx_stx_supported_kernels = [
+  "superkernel_eltunary",
+  "superkernel_conv_eltbinary",
+]
+
+# Set once by the CLI before any LayerInfo is built
+_device = None
+
+
+def set_device(device):
+  """Record the base device used to filter device-specific unsupported kernels."""
+  global _device  # pylint: disable=global-statement
+  _device = device
+
+
+def _is_unsupported_kernel(name):
+  """True if kernel name matches an unsupported superkernel for the current device."""
+  kernels = unsupported_superkernels
+  if _device not in (AIE_DEV_PHX, AIE_DEV_STX):
+    kernels = kernels + phx_stx_supported_kernels
+  return any(k in name for k in kernels)
 
 
 def _strip_template(name):
@@ -321,7 +343,7 @@ class Layer:
 
     # 1. Layers without any kernel should be skipped
     # 2. Unsupported superkernel should be skipped
-    if info.get("is_concat") or not kname or any(k in kname for k in unsupported_superkernels):
+    if info.get("is_concat") or not kname or _is_unsupported_kernel(kname):
       LOGGER.verbose_print(
         f"[WARNING] unsupported kernel {kname} at Layer {self.layer_order} will be skipped."
       )
@@ -336,7 +358,7 @@ class Layer:
         if (
           not stamp.name
           or stamp.elf_name == -1
-          or any(k in stamp.name for k in unsupported_superkernels)
+          or _is_unsupported_kernel(stamp.name)
         ):
           LOGGER.verbose_print(
             f"[WARNING] unsupported kernel {stamp.name} at Layer {self.layer_order} will be skipped."

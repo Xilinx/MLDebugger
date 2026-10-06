@@ -23,6 +23,7 @@ from mldebug.arch import (
   AIE_DEV_TEL,
 )
 from mldebug.client_debug import ClientDebug
+from mldebug import layer_info
 from mldebug.input_parser import (
   check_hw_context,
   check_registry_keys,
@@ -44,8 +45,6 @@ def _apply_unsupported_kernels_from_args(args):
 
   This must happen before LayerInfo creates Layer objects (ClientDebug -> LayerInfo).
   """
-  from mldebug import layer_info  # pylint: disable=import-outside-toplevel
-
   values = args.unsupported_kernels
   if not values:
     return
@@ -190,6 +189,7 @@ def launch_debug(args, output_dir):
   if args.backend == "xrt":
     context_id, pid = check_hw_context(args)
   # Top debug handle
+  layer_info.set_device(args.device)
   _apply_unsupported_kernels_from_args(args)
   _apply_unsupported_layers_from_args(args)
   handle = ClientDebug(args, context_id, pid, output_dir)
