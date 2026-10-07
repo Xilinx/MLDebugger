@@ -8,6 +8,7 @@ Metadata Parsing
 import itertools
 import json
 import os
+import re
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,70 @@ def _strip_template(name):
   """
   idx = name.find("<")
   return name[:idx] if idx != -1 else name
+
+
+def _split_template_args(name):
+  """
+  Turn Foo<A, B, io_buffer_config<X, Y>> into ['A', 'B', 'io_buffer_config<X, Y>'].
+  Returns [] if name is not templated.
+  """
+  start = name.find("<")
+  if start == -1 or not name.endswith(">"):
+    return []
+  args, depth, cur = [], 0, []
+  for char in name[start + 1 : -1]:
+    if char == "<":
+      depth += 1
+    elif char == ">":
+      depth -= 1
+    if char == "," and depth == 0:
+      args.append("".join(cur).strip())
+      cur = []
+    else:
+      cur.append(char)
+  args.append("".join(cur).strip())
+  return args
+
+
+def _template_key(name):
+  """
+  Reduce a kernel name to the template args mladf and the ELF spell identically so it works as a key.
+
+  Process: name -> _split_template_args -> drop the args holding '<' -> rewrite char literals ordinal
+  """
+  key = []
+  for arg in _split_template_args(name.lower()):
+    if "<" in arg:
+      continue
+    lit = re.fullmatch(r"(\(.*\))'(.)'", arg)
+    key.append(f"{lit.group(1)}{ord(lit.group(2))}" if lit else arg)
+  return tuple(key)
+
+
+def _pick_instantiation(funcs, kname):
+  """
+  Return the AIEFunction matching this layer's kernel, or None.
+
+  If there is only one func, return it.
+
+  Else:
+    ELF name -> _template_key -> tuple
+    dict[tuple] = that AIEFunction
+    mladf name (kname) -> _template_key -> same kind of tuple -> look it up
+    return that AIEFunction (caller reads start_pc off it)
+
+  None if zero or several funcs share that tuple.
+  """
+  if len(funcs) == 1:
+    return funcs[0]
+  funcs_by_template_key = {}
+  for func in funcs:
+    tkey = _template_key(func.name)
+    if tkey not in funcs_by_template_key:
+      funcs_by_template_key[tkey] = []
+    funcs_by_template_key[tkey].append(func)
+  match = funcs_by_template_key.get(_template_key(kname), [])
+  return match[0] if len(match) == 1 else None
 
 
 # For now skip these kernels for end pc
@@ -1096,11 +1161,14 @@ class LayerInfo:
     # For each layer we pick the ELF its kernel lives in, then fill in the PCs.
     for sid in range(self.overlay.get_stamps_per_batch()):
       aiec_info = self.work_dir.stamp(sid)
-      # Index functions by elf_id and stripped name for direct lookup.
-      funcs_by_elf = {
-        elf_name.split("reloadable")[-1]: {_strip_template(f.name.lower()): f for f in flist}
-        for elf_name, flist in aiec_info.aie_functions.items()
-      }
+      # Index functions by elf_id and stripped name for direct lookup. A stripped
+      # name can cover several template instantiations, so keep them all.
+      funcs_by_elf = {}
+      for elf_name, flist in aiec_info.aie_functions.items():
+        by_name = {}
+        for func in flist:
+          by_name.setdefault(_strip_template(func.name.lower()), []).append(func)
+        funcs_by_elf[elf_name.split("reloadable")[-1]] = by_name
       for layer in self.layers:
         if sid >= len(layer.stamps):
           continue
@@ -1129,8 +1197,15 @@ class LayerInfo:
         else:
           elf_id = next((e for e, fns in funcs_by_elf.items() if key in fns), None)
 
-        f = funcs_by_elf.get(elf_id, {}).get(key) if elf_id is not None else None
+        cands = funcs_by_elf.get(elf_id, {}).get(key, []) if elf_id is not None else []
+        if not cands:
+          continue
+        f = _pick_instantiation(cands, stamp.name)
         if f is None:
+          LOGGER.log(
+            f"[WARNING] Layer {layer.layer_order} stamp {sid}: {len(cands)} instantiations of "
+            f"{key} in elf {elf_id} cannot be told apart; no PC for this stamp."
+          )
           continue
         LOGGER.verbose_print("Layer found:", layer.layer_order, stamp.name)
         if not layer.lcp.is_tg:
