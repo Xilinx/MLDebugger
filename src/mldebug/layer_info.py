@@ -34,6 +34,7 @@ unsupported_superkernels = [
   "mllib_graphs::topk_adf_wrapper",
   "mllib_graphs::transpose4d_adf_wrapper<signed char>",
   "mllib_graphs::transpose4d_adf_wrapper<bfloat16>",
+  "mllib_graphs::transpose4d_adf_wrapper<int8>",
 ]
 
 # Kernels that work on PHX/STX but are unsupported on other devices.
