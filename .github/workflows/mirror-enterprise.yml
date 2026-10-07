@@ -30,6 +30,6 @@ jobs:
 
           git -c "$hdr" clone https://gitenterprise.xilinx.com/snigupta/MLDebug.git "$RUNNER_TEMP/MLDebug"
           cd "$RUNNER_TEMP/MLDebug"
-          git pull https://github.com/Xilinx/MLDebugger.git main
+          git pull --no-rebase https://github.com/Xilinx/MLDebugger.git main
           git -c "$hdr" push origin main
 
