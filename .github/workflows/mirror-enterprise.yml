@@ -24,12 +24,14 @@ jobs:
       - name: Push main to enterprise
         env:
           ENTERPRISE_TOKEN: ${{ secrets.MLDEBUG_ENTERPRISE_TOKEN }}
+          GIT_TERMINAL_PROMPT: "0"
+          GIT_MERGE_AUTOEDIT: "no"
         run: |
-          auth=$(printf 'x-access-token:%s' "$ENTERPRISE_TOKEN" | base64 -w0)
-          hdr="http.extraHeader=AUTHORIZATION: basic ${auth}"
-
-          git -c "$hdr" clone https://gitenterprise.xilinx.com/XDP/MLDebug.git "$RUNNER_TEMP/MLDebug"
+          # Send the username and token together. Answering only the password
+          # prompt can pair the token with the saved login name.
+          cred='!f() { echo username=x-access-token; echo "password=$ENTERPRISE_TOKEN"; }; f'
+          git -c credential.helper= -c "credential.helper=$cred" \
+            clone https://gitenterprise.xilinx.com/XDP/MLDebug.git "$RUNNER_TEMP/MLDebug"
           cd "$RUNNER_TEMP/MLDebug"
           git pull --no-rebase https://github.com/Xilinx/MLDebugger.git main
-          git -c "$hdr" push origin main
-
+          git -c credential.helper= -c "credential.helper=$cred" push origin main
