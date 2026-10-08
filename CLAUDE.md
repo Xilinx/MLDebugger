@@ -24,7 +24,7 @@ Supported devices: Phoenix (`phx`), Strix (`stx`), Telluride
 (`telluride`), NPU3 (`npu3`).
 
 Backends:
-- **XRT** -- talks to live hardware through XRT.
+- **XRT** -- talks to live hardware through runtime.
 - **Test** -- a pure-Python simulator used by CI; no hardware needed.
 - **Core Dump** -- read-only inspection of a previously captured dump.
 
