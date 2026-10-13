@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2025-2026 Advanced Micro Devices, Inc. All rights reserved
 # Packages VAIProfile inputs from a hardware run directory into vai_profile.zip (top-level files only),
-# then moves collected files into vai_profile_data (or vai_profile_data_<n> if the name exists).
+# or vai_profile_<n>.zip when that name already exists, then moves collected files into
+# vai_profile_data (or vai_profile_data_<n> if the name exists).
 # Collects: aie_event_runtime_config_ctx_<id>_run_<id>.json, aie_trace_ctx_*_run_*_inf_*_strm_*.txt,
 # dtrace_dump_ctx*.py, dtrace_dump_ctx*.json, aie_dtrace_ctx*.ct,
 # record_timer_*.json (incl. record_timer_inference_*, record_timer_ts*, etc.),
 # onnxruntime_profile_*.json.
-# vai_profile.zip remains at the run directory root.
+# The zip remains at the run directory root.
 # Usage: vaiprofile-collect-data <hardware_run_directory>
 # Requires: zip (Info-ZIP) on PATH.
 
@@ -76,7 +77,13 @@ if ((${#files[@]} == 0)); then
 fi
 
 out="${root}/vai_profile.zip"
-rm -f "$out"
+if [[ -e "$out" ]]; then
+  n=1
+  while [[ -e "${root}/vai_profile_${n}.zip" ]]; do
+    ((n++)) || true
+  done
+  out="${root}/vai_profile_${n}.zip"
+fi
 zip -j -q "$out" -- "${files[@]}"
 
 profile_dir="${root}/vai_profile_data"
