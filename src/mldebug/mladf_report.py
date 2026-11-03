@@ -99,6 +99,15 @@ class MladfReport:
     ids = set(ids)
     return [lyr for lyr in layers if lyr.get("layer_id") in ids]
 
+  def get_l2_buffers_for_bilo(self, bilo, ids=None):
+    """De-duplicated `l2_data_memory_info` entries for a buffer_info layer."""
+    entries = {}
+    for lyr in self.get_aiec_layers_by_bilo(bilo, ids):
+      for e in lyr.get("l2_data_memory_info", []):
+        key = (e["name"], e["ping_location"]["column"], e["ping_offset_in_bytes"])
+        entries.setdefault(key, e)
+    return list(entries.values())
+
   def get_running_stamp_count(self, bilo, max_stamps, ids=None):
     """
     Number of per-batch stamps running a kernel for a buffer_info layer, or

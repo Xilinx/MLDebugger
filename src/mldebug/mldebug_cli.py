@@ -430,6 +430,7 @@ def app():
       "multistamp",
       "disable_tg",
       "skip_iter2",
+      "tg_dump",
     ],
     help="Specify one or more runtime flags:\n"
     "skip_dump       : Do not dump memory\n"
@@ -443,6 +444,7 @@ def app():
     # "dump_temps      : Write intermediate (.lst) files to disk\n"
     "multistamp      : Enable N Stamp/Batch mode\n",
     # "disable_tg      : Disable Step to TG layers\n",
+    # "tg_dump         : Dump L2 IFM buffers of TG layers\n",
     # 'mock_hang'    : Simulate hang at one of the layers in test mode
     metavar="<flag1> <flag2>",
   )

@@ -51,6 +51,7 @@ class RunFlags:
   dump_temps: bool
   multistamp: bool
   disable_tg: bool
+  tg_dump: bool = False
 
 
 @dataclass
@@ -145,6 +146,7 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     get_flag("dump_temps"),
     get_flag("multistamp"),
     get_flag("disable_tg"),
+    get_flag("tg_dump"),
   )
 
   # Support all stamps in standalone mode and when reporting the design's layers

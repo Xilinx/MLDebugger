@@ -186,7 +186,9 @@ class Buffer:
   Top level Buffer e.g: ifm, ofm, wts. Handles mapping and initialization of L1 and L2 buffers.
   """
 
-  def __init__(self, entry, buf_type, size_shift, aie_iface, ifm=False, ofm=False, wts=False):
+  def __init__(
+    self, entry, buf_type, size_shift, aie_iface, ifm=False, ofm=False, wts=False, tg=False
+  ):
     """
     Initializes a Buffer object that stores L1 and L2 buffer mappings.
 
@@ -198,6 +200,7 @@ class Buffer:
         ifm (bool, optional): Is input feature map buffer.
         ofm (bool, optional): Is output feature map buffer.
         wts (bool, optional): Is weights buffer.
+        tg (bool, optional): Built from the mladf report for a templated graph layer.
     """
     self.l1 = None
     self.l2 = []
@@ -205,6 +208,7 @@ class Buffer:
     self.ifm = ifm
     self.ofm = ofm
     self.wts = wts
+    self.tg = tg
     size_shift = self._get_size_shift(entry, size_shift)
 
     # pong can be missing (no double buffering)
@@ -435,8 +439,9 @@ class Layer:
 
     self._initialize_l3_buffers(info, version)
 
-    # No L2 support for templated graph layers
+    # Templated graph layers: only L2 IFM, sourced from the mladf report
     if self.lcp.is_tg:
+      self._initialize_tg_l2_buffers(mladf_report, aie_iface)
       return
 
     self._initialize_flexml_ids(info)
@@ -456,6 +461,26 @@ class Layer:
     Caller must ensure participation (see `runs_replica`).
     """
     return self.stamps[int(sid % self.overlay_stamps_per_batch)]
+
+  def _initialize_tg_l2_buffers(self, mladf_report, aie_iface):
+    """
+    Build L2 IFM buffers for a TG layer from mladf entries, as buffer_info-style entries.
+    """
+    for e in mladf_report.get_l2_buffers_for_bilo(self.layer_order, self.mladf_ids):
+      # mladf lists every replica with absolute columns; the dumper picks each sid's own entries
+      if "ifm" not in e["name"].split(".")[-1]:
+        continue
+      # Sizes are already in bytes
+      entry = {"dtype": "uint8_t"}
+      for slot in ("ping", "pong"):
+        if f"{slot}_location" in e:
+          loc = e[f"{slot}_location"]
+          entry[f"l2_{slot}"] = [
+            [loc["column"], loc["row"], e[f"{slot}_offset_in_bytes"], e[f"{slot}_size_in_bytes"]]
+          ]
+          entry[f"l2_{slot}_buffer_names"] = [f"{e['name']}_{slot}"]
+      buf_type = f"ifm{len(self.in_buffers) + 1}"
+      self.in_buffers.append(Buffer(entry, buf_type, None, aie_iface, ifm=True, tg=True))
 
   def _initialize_flexml_ids(self, info):
     """
