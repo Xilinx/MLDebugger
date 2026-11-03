@@ -159,6 +159,8 @@ Common runtime flags (`-f`):
 - `multistamp` -- actually drive every replica (all batches and all
   per-batch stamps); default is to collapse to a single replica
   (B=S=1) for sanity.
+- `tg_dump` (hidden) -- also dump L2 IFM buffers of templated-graph
+  (TG) layers, sourced from the mladf report. Off by default.
 
 ### Testing
 
@@ -334,6 +336,16 @@ the rest of the system uses.
   be extended at runtime via `--unsupported_kernels`.
 - L3 offsets come from `flexmlrt-hsi.json`. Only a single parent
   spill buffer is supported today -- multi-DDR L3 is not yet handled.
+- TG layers have no L1/L2 entries in `buffer_info.json`. Their L2 IFM
+  buffers come from the mladf report (`_initialize_tg_l2_buffers`):
+  entries whose last name component contains `ifm` become one
+  `Buffer` each (`ifm1`, `ifm2`, ..., `tg=True`), with ping and an
+  optional pong. OFM/wts are not handled. Unlike buffer_info, mladf
+  lists every replica separately with *absolute* columns (names
+  `templated_graph_<bilo>_<stamp>[_<batch>]`), so TG buffers are not
+  mirrored by `sid` offset. Mladf memory-tile row 0 still gets the
+  same +1 as buffer_info. TG `Lcp` keeps its defaults (all 1), so the
+  IFM is dumped at every iteration.
 
 ### `work_dir.py` -- ELF disassembly
 
@@ -368,6 +380,11 @@ instead.
 L1 buffers are dumped from either the ping or the pong slot depending
 on iteration parity. L2 OFM dumps shift the iteration index back by
 one because OFM is dumped at the start of the *next* iteration.
+
+TG L2 buffers (only with `-f tg_dump`) use their absolute mladf column
+as-is; each replica dumps only the entries on its own memory tiles.
+Both ping and pong are dumped (we don't know which is live), as
+`batch<N>/layer_<order>/l2_it<it>_<mladf name>_<ping|pong>.bin`.
 
 L3 dumps are not direct reads -- they are forwarded to the FlexML
 runtime via `DebugServer`, which writes them to disk on FlexML's side
@@ -460,6 +477,11 @@ to its aiecompiler layer(s) by matching parent graph names
 debugger to handle templated-graph (TG) layers when `enable_tg` is
 on; without this report the debugger marks TG layers as unsupported
 and skips them.
+
+`get_l2_buffers_for_bilo()` returns the de-duplicated
+`l2_data_memory_info` entries (name, ping/pong location, offset and
+size in bytes) for a buffer_info layer; it is the source of TG L2
+buffers.
 
 ### `utils.py` and friends
 
