@@ -123,13 +123,20 @@ class MemoryDumper:
     suffix = f"stamp{overlay.replica_to_stamp(sid)}"
 
     for buffer in buffers:
+      if buffer.tg and not self.args.run_flags.tg_dump:
+        continue
       if buffer.ofm:
         it -= 1  # OFM is dumped at start of next iteration
       for buf_id, group in groupby(buffer.l2, key=lambda x: x.buf_id):
+        group = list(group)
         buffer_name = f"l2_it{it}_{buf_id}_{suffix}"
+        if buffer.tg:
+          # e.g. layer_51/l2_it3_compute_graph.templated_graph_51_0.ifm_ping
+          buffer_name = f"l2_it{it}_{group[0].name}"
         data = []
-        for l2 in list(group):
-          col = l2.col + sid * overlay.get_stampwidth()
+        for l2 in group:
+          # TG columns are absolute (each replica has its own entry); others are stamp-relative
+          col = l2.col if buffer.tg else l2.col + sid * overlay.get_stampwidth()
           if (col, l2.row) not in overlay.get_tiles(self.args.aie_iface.MEM_TILE_T, stamp_id=sid):
             continue
           data.extend(self.impl.dump_memory(col, l2.row, l2.address, l2.size))
@@ -137,7 +144,12 @@ class MemoryDumper:
             break
           if use_l2_names and l2.name:
             buffer_name = l2.name
-        if self.args.run_flags.l2_ifm_dump or self.args.run_flags.l2_dump_only:
+        if buffer.tg:
+          # Entry belongs to another replica
+          if not data:
+            continue
+          fname = f"{self.get_output_path(layer_order=layer_order, batch=batch)}/{buffer_name}"
+        elif self.args.run_flags.l2_ifm_dump or self.args.run_flags.l2_dump_only:
           fname = f"{self.get_output_path(layer_order=layer_order, batch=batch)}/{buffer.type}_{buffer_name}"
         else:
           fname = f"{self.get_output_path(buffer=buffer.type, layer_order=layer_order, batch=batch)}/{buffer_name}"
