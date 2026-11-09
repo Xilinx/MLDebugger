@@ -90,6 +90,28 @@ class AIEStatus:
           )
           channel += 1
 
+  def _append_plio_status(self):
+    """
+    Append shim PLIO status. Called only for advanced status.
+    No-op unless the arch defines REGS_PLIO_STATUS (aie2ps / Telluride).
+    Disabled south ports are omitted.
+    """
+    regs = getattr(self.aie_iface, "REGS_PLIO_STATUS", None)
+    if not regs:
+      return
+    mtype = self.aie_iface.SHIM_TILE_T
+    rtype = "plio_status"
+    self.results[mtype][rtype] = []
+    for c, r in self.get_debug_tiles(mtype, raw=True):
+      for name, reg in regs.items():
+        regdata = self.backend.read_register(c, r, reg)
+        if name.startswith("SS_") and (regdata >> 31 & 1) == 0:
+          continue
+        if name.startswith("PL_EVENT_STATUS") and regdata == 0:
+          continue
+        parsed = self.aie_iface.parse_register(name, regdata)
+        self.results[mtype][rtype].append((name, c, r, hex(regdata), "", parsed))
+
   def _append_bd_status(self, mtype, registers):
     """
     Append Buffer Descriptor (BD) status to results for the given module type.
@@ -438,8 +460,11 @@ class AIEStatus:
         self._get_advanced_metrics(ttype, regmap, advanced)
         if self.aie_iface.HAS_UC_MODULE:
           self._get_uc_status(debug_map_json=debug_map_json)
-      # DMA in AIE, Shim and MEM Tiles
+      # DMA in AIE, Shim, and MEM Tiles
       self._append_dma_status(ttype, vaiml)
+      # PLIO is shim PL stream interface (aie2ps & advanced only)
+      if advanced and ttype == self.aie_iface.SHIM_TILE_T:
+        self._append_plio_status()
 
   def get(
     self,

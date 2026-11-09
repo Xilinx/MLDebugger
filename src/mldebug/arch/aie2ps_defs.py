@@ -213,6 +213,43 @@ REGS_DMA_STATUS = {
   },
 }
 
+# Shim PL-module registers for PLIO (south stream ports). NPU3 has no PL.
+# Masters are AIE->PL, slaves are PL->AIE. Addresses from the aie2ps shim PL module.
+PLIO_SOUTH_MASTERS = 6
+PLIO_SOUTH_SLAVES = 8
+REGS_PLIO_STATUS = {
+  "STREAM_SWITCH_PARITY_STATUS": 0x3FF10,
+  "CONTROL_PACKET_HANDLER_STATUS": 0x3FF30,
+  "STREAM_SWITCH_EVENT_PORT_SELECTION_0": 0x3FF00,
+  "STREAM_SWITCH_EVENT_PORT_SELECTION_1": 0x3FF04,
+  "PL_EVENT_STATUS4": 0x34210,
+  "PL_EVENT_STATUS5": 0x34214,
+  "PL_INTERFACE_UPSIZER_CONFIG": 0x30000,
+  "PL_INTERFACE_DOWNSIZER_CONFIG": 0x30004,
+  "PL_INTERFACE_DOWNSIZER_ENABLE": 0x30008,
+}
+for _i in range(PLIO_SOUTH_MASTERS):
+  REGS_PLIO_STATUS[f"SS_MASTER_SOUTH{_i}"] = 0x3F008 + 4 * _i
+for _i in range(PLIO_SOUTH_SLAVES):
+  REGS_PLIO_STATUS[f"SS_SLAVE_SOUTH{_i}"] = 0x3F108 + 4 * _i
+
+# Physical stream-switch port ids on the shim PL module.
+_SHIM_MASTER_PORTS = (
+  "CTRL0", "FIFO0",
+  "SOUTH0", "SOUTH1", "SOUTH2", "SOUTH3", "SOUTH4", "SOUTH5",
+  "WEST0", "WEST1", "WEST2", "WEST3",
+  "NORTH0", "NORTH1", "NORTH2", "NORTH3", "NORTH4", "NORTH5",
+  "EAST0", "EAST1", "EAST2", "EAST3",
+)
+_SHIM_SLAVE_PORTS = (
+  "CTRL0", "FIFO0",
+  "SOUTH0", "SOUTH1", "SOUTH2", "SOUTH3", "SOUTH4", "SOUTH5", "SOUTH6", "SOUTH7",
+  "WEST0", "WEST1", "WEST2", "WEST3",
+  "NORTH0", "NORTH1", "NORTH2", "NORTH3",
+  "EAST0", "EAST1", "EAST2", "EAST3",
+  "TRACE0",
+)
+
 core_status_strings = [
   "Enable",
   "Reset",
@@ -607,6 +644,127 @@ def parse_lock_ofl_ufl(data):
   return locks
 
 
+def _shim_port_name(ports, idx):
+  if 0 <= idx < len(ports):
+    return ports[idx]
+  return f"ID{idx}"
+
+
+def _parse_pl_widths(data, num_ports):
+  """Decode PL interface width. 0=32-bit, 1=64-bit; the combine bit makes a 128-bit pair."""
+  parts = []
+  for pair in range(num_ports // 2):
+    base = pair * 3
+    lo = pair * 2
+    if data >> (base + 2) & 1:
+      parts.append(f"S{lo}+S{lo + 1}=128")
+    else:
+      parts.append(f"S{lo}={'64' if data >> base & 1 else '32'}")
+      parts.append(f"S{lo + 1}={'64' if data >> (base + 1) & 1 else '32'}")
+  return ",".join(parts)
+
+
+def parse_plio_upsizer(data):
+  """AIE to PL width for south masters 0-5."""
+  return _parse_pl_widths(data, PLIO_SOUTH_MASTERS)
+
+
+def parse_plio_downsizer(data):
+  """PL to AIE width for south slaves 0-7."""
+  return _parse_pl_widths(data, PLIO_SOUTH_SLAVES)
+
+
+def parse_plio_downsizer_enable(data):
+  enabled = [f"S{i}" for i in range(PLIO_SOUTH_SLAVES) if data >> i & 1]
+  return ",".join(enabled) if enabled else "none"
+
+
+def parse_plio_parity(data):
+  names = (
+    "South0", "South1", "South2", "South3", "South4", "South5", "Tile_Control", "uController"
+  )
+  bits = [names[i] for i in range(len(names)) if data >> i & 1]
+  return ",".join(bits) if bits else "OK"
+
+
+def parse_plio_ctrl_pkt(data):
+  names = (
+    "First_Header_Parity_Error", "Second_Header_Parity_Error", "SLVERR_On_Access", "Tlast_Error"
+  )
+  bits = [names[i] for i in range(len(names)) if data >> i & 1]
+  return ",".join(bits) if bits else "OK"
+
+
+def parse_plio_master(data):
+  """South master (AIE to PL). Circuit mode [4:0] is the slave port it reads."""
+  if (data >> 31 & 1) == 0:
+    return "Disabled"
+  mode = "Packet" if data >> 30 & 1 else "Circuit"
+  cfg = data & 0x7F
+  if data >> 30 & 1:
+    extra = f",arb={cfg & 7},msel={(cfg >> 3) & 0xF}"
+  else:
+    extra = f",src={_shim_port_name(_SHIM_SLAVE_PORTS, cfg & 0x1F)}"
+  if data >> 7 & 1:
+    extra += ",DropHeader"
+  return "Enabled," + mode + extra
+
+
+def parse_plio_slave(data):
+  """South slave (PL to AIE)."""
+  if (data >> 31 & 1) == 0:
+    return "Disabled"
+  mode = "Packet" if data >> 30 & 1 else "Circuit"
+  return "Enabled," + mode
+
+
+def _parse_plio_event_sel(data, port_base):
+  parts = []
+  for i in range(4):
+    field = (data >> (8 * i)) & 0x3F
+    pid = field & 0x1F
+    is_master = field >> 5 & 1
+    ports = _SHIM_MASTER_PORTS if is_master else _SHIM_SLAVE_PORTS
+    kind = "master" if is_master else "slave"
+    parts.append(f"P{port_base + i}:{kind} {_shim_port_name(ports, pid)}")
+  return ",".join(parts)
+
+
+def parse_plio_event_sel_0(data):
+  return _parse_plio_event_sel(data, 0)
+
+
+def parse_plio_event_sel_1(data):
+  return _parse_plio_event_sel(data, 4)
+
+
+def _parse_plio_port_events(data, event_base):
+  """Sticky PL stream-switch port events. Port 0 idle is event 133."""
+  names = ("Idle", "Running", "Stalled", "Tlast")
+  parts = []
+  other = 0
+  for bit in range(32):
+    if (data >> bit & 1) == 0:
+      continue
+    ev = event_base + bit
+    if 133 <= ev <= 164:
+      idx = ev - 133
+      parts.append(f"Port{idx // 4}_{names[idx % 4]}")
+    else:
+      other |= 1 << bit
+  if other:
+    parts.append(f"other=0x{other:x}")
+  return ",".join(parts) if parts else "OK"
+
+
+def parse_plio_event_status4(data):
+  return _parse_plio_port_events(data, 128)
+
+
+def parse_plio_event_status5(data):
+  return _parse_plio_port_events(data, 160)
+
+
 # One time creation of register parsing dict
 REG_PARSERS = {
   "CORE_STATUS": parse_core_status,
@@ -624,6 +782,19 @@ for _t in TILE_TYPES:
     REG_PARSERS[_k] = parse_s2mm_status
   for _k in REGS_DMA_STATUS["MM2S"][_t]:
     REG_PARSERS[_k] = parse_mm2s_status
+REG_PARSERS["STREAM_SWITCH_PARITY_STATUS"] = parse_plio_parity
+REG_PARSERS["CONTROL_PACKET_HANDLER_STATUS"] = parse_plio_ctrl_pkt
+REG_PARSERS["STREAM_SWITCH_EVENT_PORT_SELECTION_0"] = parse_plio_event_sel_0
+REG_PARSERS["STREAM_SWITCH_EVENT_PORT_SELECTION_1"] = parse_plio_event_sel_1
+REG_PARSERS["PL_EVENT_STATUS4"] = parse_plio_event_status4
+REG_PARSERS["PL_EVENT_STATUS5"] = parse_plio_event_status5
+REG_PARSERS["PL_INTERFACE_UPSIZER_CONFIG"] = parse_plio_upsizer
+REG_PARSERS["PL_INTERFACE_DOWNSIZER_CONFIG"] = parse_plio_downsizer
+REG_PARSERS["PL_INTERFACE_DOWNSIZER_ENABLE"] = parse_plio_downsizer_enable
+for _i in range(PLIO_SOUTH_MASTERS):
+  REG_PARSERS[f"SS_MASTER_SOUTH{_i}"] = parse_plio_master
+for _i in range(PLIO_SOUTH_SLAVES):
+  REG_PARSERS[f"SS_SLAVE_SOUTH{_i}"] = parse_plio_slave
 
 
 def parse_register(name, data):
