@@ -460,7 +460,7 @@ class AIEStatus:
         self._get_advanced_metrics(ttype, regmap, advanced)
         if self.aie_iface.HAS_UC_MODULE:
           self._get_uc_status(debug_map_json=debug_map_json)
-      # DMA in AIE, Shim and MEM Tiles (shim DMA is the GMIO/NoC path)
+      # DMA in AIE, Shim and MEM Tiles
       self._append_dma_status(ttype, vaiml)
       # PLIO is the shim PL stream interface. Present on aie2ps only, and
       # only included with advanced status.
