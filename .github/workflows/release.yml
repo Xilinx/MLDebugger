@@ -4,6 +4,8 @@
 name: MLDebugger Release
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -79,6 +81,7 @@ jobs:
         uv pip install --system "$WHEEL_PATH"
 
     - name: Resolve release tag and name
+      if: github.event_name == 'workflow_dispatch'
       id: release_meta
       shell: bash
       run: |
@@ -92,6 +95,7 @@ jobs:
         echo "name=$NAME" >> $GITHUB_OUTPUT
 
     - name: Create Release
+      if: github.event_name == 'workflow_dispatch'
       id: create_release
       uses: actions/create-release@v1
       env:
@@ -103,6 +107,7 @@ jobs:
         prerelease: false
 
     - name: Upload Assets to Release
+      if: github.event_name == 'workflow_dispatch'
       run: |
         # Upload only the Wheel (DLL is already inside it)
         gh release upload "${{ steps.release_meta.outputs.tag }}" \
@@ -111,7 +116,14 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Upload wheel to internal Artifactory
+      run: |
+        /tools/batonroot/rodin/devkits/lnx64/jfrog/jfrog-cli rt u \
+          "./${{ steps.wheel-path.outputs.wheel_path }}" \
+          "xdp_local/MLDebug/VAI/release/${{ steps.wheel-path.outputs.wheel_name }}"
+
     - name: Delete old releases
+      if: github.event_name == 'workflow_dispatch'
       shell: bash
       run: |
         # Get all releases, skip the first 50 (keep_latest), delete the rest
