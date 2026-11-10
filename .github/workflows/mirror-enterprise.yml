@@ -21,6 +21,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Debug token
+        env:
+          ENTERPRISE_TOKEN: ${{ secrets.MLDEBUG_ENTERPRISE_TOKEN }}
+        run: |
+          echo "token length: ${#ENTERPRISE_TOKEN}"
+          curl -s -o /dev/null -w "%{http_code}\n" \
+            -H "Authorization: token ${ENTERPRISE_TOKEN}" \
+            https://gitenterprise.xilinx.com/api/v3/user
+          git config --show-origin --get-regexp 'http\.|url\.|credential' || true
+
       - name: Push main to enterprise
         env:
           ENTERPRISE_TOKEN: ${{ secrets.MLDEBUG_ENTERPRISE_TOKEN }}
