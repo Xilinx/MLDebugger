@@ -27,11 +27,12 @@ jobs:
           GIT_TERMINAL_PROMPT: "0"
           GIT_MERGE_AUTOEDIT: "no"
         run: |
-          # Send the username and token together. Answering only the password
-          # prompt can pair the token with the saved login name.
-          cred='!f() { echo username=x-access-token; echo "password=$ENTERPRISE_TOKEN"; }; f'
-          git -c credential.helper= -c "credential.helper=$cred" \
-            clone https://gitenterprise.xilinx.com/XDP/MLDebug.git "$RUNNER_TEMP/MLDebug"
+          # x-access-token plus the PAT is a complete HTTPS credential, so git
+          # does not ask for a username or password. Clearing credential.helper
+          # keeps the runner's saved enterprise login out of this request.
+          remote="https://x-access-token:${ENTERPRISE_TOKEN}@gitenterprise.xilinx.com/XDP/MLDebug.git"
+          git -c credential.helper= clone "$remote" "$RUNNER_TEMP/MLDebug"
           cd "$RUNNER_TEMP/MLDebug"
+          git remote set-url origin https://gitenterprise.xilinx.com/XDP/MLDebug.git
           git pull --no-rebase https://github.com/Xilinx/MLDebugger.git main
-          git -c credential.helper= -c "credential.helper=$cred" push origin main
+          git -c credential.helper= push "$remote" main
