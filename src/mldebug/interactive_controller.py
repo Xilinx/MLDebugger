@@ -157,26 +157,26 @@ class InteractiveController:
     """
     Continue execution until the next manual breakpoint or to the end of design.
 
-    Handles Failsafe Partition (FSP) usage for VAIML compilation.
+    When another NPU partition follows, the final continue releases the cores
+    and waits for the driver's debug halt at the start of that partition.
     """
     if self.args.aie_only:
       print("This Functionality is disabled for aie-only debug.")
       return
 
-    is_fsp = self.args.vaiml_folder_path and not self.args.last_fsp
+    is_next = self.args.vaiml_folder_path and not getattr(self.args, "last_fsp", True)
     if self.state.continue_to_finish:
       print("Running AIE to end")
-      for sid, impl in enumerate(self.impls):
-        impl.continue_aie()
-        if is_fsp:
-          self.aie_utls[sid].set_fsp_breakpoint()
-      if is_fsp:
-        print(
-          "First, please press Enter ONCE in the VAIML process"
-          " to load the next Failsafe Partition, and wait for "
-          "`waiting for user input`. Then press q here."
-        )
+      if is_next:
+        # skip_iter2's last layer already released the cores once.
+        if not self.args.run_flags.skip_iter2:
+          for utl in self.aie_utls:
+            utl.initialize_stamp()
+        self.runner.wait_for_next_partition()
+        print("Next partition is debug-halted. Quit this session to debug it.")
         return
+      for impl in self.impls:
+        impl.continue_aie()
       sys.exit(0)
 
     if not self.state.get_current_layer():
@@ -211,12 +211,12 @@ class InteractiveController:
           return
 
     if self.state.continue_to_finish:
-      fsp_text = ""
-      if is_fsp:
-        fsp_text = " or to load the next Failsafe Partition"
+      next_text = ""
+      if is_next:
+        next_text = ", then wait for the next partition"
       print(
         f"Reached Final iteration : {ta_itr} of layer : {ta_layer}. "
-        f"Press c/continue to Run AIE to end and exit{fsp_text}"
+        f"Press c/continue to Run AIE to end and exit{next_text}"
       )
     else:
       print()

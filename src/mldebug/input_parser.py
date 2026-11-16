@@ -6,7 +6,6 @@ Input config and misc parsing
 """
 
 from dataclasses import dataclass
-from pathlib import Path
 
 import glob
 import json
@@ -623,49 +622,259 @@ def get_failsafe_partitions(subgraph_path: str) -> list[str]:
   return result
 
 
-def get_subgraph(args) -> tuple[str, Subgraph]:
+def _partition_index(name: str) -> int:
+  """Numeric suffix of a vaiml_par_<n> directory name."""
+  match = re.search(r"(\d+)$", name)
+  if not match:
+    raise ValueError(f"Invalid partition name format: {name}")
+  return int(match.group(1))
+
+
+def _is_npu_subgraph(folder_path: str) -> bool:
   """
-  Determines if the design is a single-subgraph design or finds the subgraph specified in vitisai_config.json.
+  True when the subgraph has AIE compiler output.
+
+  CPU partitions have neither an AIE work directory nor an AIE call order.
+  """
+  if os.path.isdir(os.path.join(folder_path, "0", "aiecompiler", "Work")):
+    return True
+  if os.path.isfile(os.path.join(folder_path, "0", "buffer_info.json")):
+    return True
+  info_path = os.path.join(folder_path, "partition-info.json")
+  if not os.path.isfile(info_path):
+    return False
+  with open(info_path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+  return "aie_partition_call_order" in data
+
+
+def fnv1a32(name: str) -> int:
+  """FNV-1a 32-bit hash of a kernel name. Matches the halt plugin."""
+  digest = 2166136261
+  for byte in name.encode("utf-8"):
+    digest ^= byte
+    digest = (digest * 16777619) & 0xFFFFFFFF
+  return digest
+
+
+def partition_kernel_name(model_folder, subgraph_name, subgraph_path, fsp, fsp_order) -> str:
+  """
+  Name the halt plugin hashes into Performance_Counter0.
+
+  flexmlrt-hsi.json records it as aie_kernel_name. The folder name is not
+  always that string: hyphens in the model directory become underscores.
+  """
+  hsi_path = os.path.join(subgraph_path, fsp, "flexmlrt-hsi.json")
+  if os.path.isfile(hsi_path):
+    with open(hsi_path, "r", encoding="utf-8") as f:
+      name = json.load(f).get("aie_kernel_name")
+    if name:
+      return name
+  name = f"{model_folder}_{subgraph_name}"
+  if list(fsp_order) != ["0"]:
+    name = f"{name}_part_{fsp}"
+  return name
+
+
+def specified_subgraph(vaiml_folder_path: str) -> str | None:
+  """
+  The single subgraph named by include_subgraphs, or None.
+
+  None means the user did not pin a partition. More than one name is rejected.
+  """
+  cfg_file = os.path.join(vaiml_folder_path, "vitisai_config.json")
+  if not os.path.isfile(cfg_file):
+    return None
+  with open(cfg_file, "r", encoding="utf-8") as f:
+    data = json.load(f)
+  for pas in data.get("passes", []):
+    vaiml_config = pas.get("vaiml_config")
+    if not vaiml_config:
+      continue
+    names = vaiml_config.get("include_subgraphs")
+    if not names:
+      return None
+    if len(names) != 1:
+      raise RuntimeError(
+        "Error: Multiple subgraphs found. "
+        "Please specify the partition by using include_subgraphs "
+        "flag in vaiml_config in vitisai_config.json"
+      )
+    return names[0]
+  return None
+
+
+def _buffer_layout(buffer_info_file: str):
+  """(batches, stamps, nrow, ncol) from buffer_info, matching LayerInfo."""
+  with open(buffer_info_file, encoding="utf-8") as fd:
+    data = json.load(fd)
+  meta = data.get(".meta", {})
+  overlay_stamps, nrow, ncol = meta.get("layout") or [1, 4, 4]
+  batches = meta.get("device_batch_size", 1) or 1
+  stamps = meta.get("max_stamps_used")
+  group = meta.get("max_stamp_group_size", 1) or 1
+  if not stamps:
+    layers = data.get("layers") or {}
+    if layers:
+      widest = max(lyr.get("no_of_stamps", 1) for lyr in layers.values())
+      stamps = max(1, widest // batches)
+    else:
+      stamps = overlay_stamps
+  return batches, max(1, stamps // group), nrow, ncol
+
+
+def _core_tiles(aie_iface, layout, overlay_arg):
+  """Every core tile in the overlay, including replicas collapsed at runtime."""
+  batches, stamps, nrow, ncol = layout
+  if overlay_arg:
+    parsed = [int(part) for part in overlay_arg.split("x")]
+    batches = 1
+    if len(parsed) == 3:
+      stamps, ncol, nrow = parsed
+    elif len(parsed) == 2:
+      stamps, ncol, nrow = 1, parsed[0], parsed[1]
+  offset = aie_iface.AIE_TILE_ROW_OFFSET
+  tiles = []
+  for replica in range(batches * stamps):
+    start = replica * ncol
+    for col in range(start, start + ncol):
+      for row in range(offset, offset + nrow):
+        tiles.append((col, row))
+  return tiles
+
+
+def _candidate_core_tiles(args, runs):
+  """Union of core tiles across the partitions that might be halted."""
+  tiles = []
+  seen = set()
+  for _name, folder, fsp, _order in runs:
+    info = os.path.join(folder, fsp, "buffer_info.json")
+    if not os.path.isfile(info):
+      continue
+    for tile in _core_tiles(args.aie_iface, _buffer_layout(info), args.overlay):
+      if tile not in seen:
+        seen.add(tile)
+        tiles.append(tile)
+  return tiles
+
+
+def _uniform_counter(values, label, args):
+  """The one value every core holds, or exit if the tiles disagree."""
+  distinct = set(values.values())
+  if len(distinct) != 1:
+    for (col, row), value in values.items():
+      LOGGER.log(f"[INFO] Core ({col},{row}) {label} 0x{value:08x}")
+    LOGGER.log(f"[ERROR] {label} differs across core tiles.")
+    cleanup_and_exit(args, 1)
+  return distinct.pop()
+
+
+def select_halted_partition(args, runs, model_folder):
+  """
+  Read the halt plugin's counters and return the matching partition.
+
+  Performance_Counter0 is the FNV-1a hash of the halted partition's kernel
+  name. Performance_Counter1 is the halt count: 0 when the runtime halts only
+  once, otherwise 1 for the first halt and one higher for each later halt on
+  this context. Call this before anything unhalts the cores. Logs every hash
+  comparison. Exits when the tiles disagree or no name matches.
+
+  Returns:
+    (run, halt_count). run is (name, folder, fsp, order).
+  """
+  # Device and register map come from this partition. The counters live on
+  # the cores, so any candidate's arch is enough to address them.
+  sample = runs[0]
+  create_run_flags(args, sample[1], sample[2], sample[3])
+  tiles = _candidate_core_tiles(args, runs)
+  if not tiles:
+    LOGGER.log("[ERROR] No core tiles found to read the halt counters.")
+    cleanup_and_exit(args, 1)
+
+  ctx, pid = check_hw_context(args)
+  regs = args.aie_iface.Core_registers
+  offsets = {
+    "Performance_Counter0": regs["PERF_CNTR_0"],
+    "Performance_Counter1": regs["PERF_CNTR_1"],
+  }
+  read = {name: {} for name in offsets}
+  config = BackendConfig(
+    tiles=tiles,
+    ctx_id=ctx,
+    pid=pid,
+    device=args.device,
+    sub_device=getattr(args, "sub_device", None) or args.device,
+    args=args,
+  )
+  backend = create_backend(args.backend, config)
+  try:
+    for col, row in tiles:
+      for name, offset in offsets.items():
+        try:
+          read[name][(col, row)] = backend.read_register(col, row, offset) & 0xFFFFFFFF
+        except Exception as err:  # pylint: disable=broad-except
+          LOGGER.log(
+            f"[ERROR] Failed to read {name} at ({col},{row}): "
+            f"{type(err).__name__}: {err}"
+          )
+          cleanup_and_exit(args, 1)
+  finally:
+    del backend
+
+  observed = _uniform_counter(read["Performance_Counter0"], "Performance_Counter0", args)
+  halt_count = _uniform_counter(read["Performance_Counter1"], "Performance_Counter1", args)
+  LOGGER.log(
+    f"[INFO] Performance_Counter0 on {len(tiles)} core tiles is 0x{observed:08x}, "
+    f"halt count {halt_count}"
+  )
+
+  matched = None
+  for run in runs:
+    name, folder, fsp, order = run
+    kernel = partition_kernel_name(model_folder, name, folder, fsp, order)
+    digest = fnv1a32(kernel)
+    same = digest == observed
+    LOGGER.log(
+      f"[INFO] Compare {kernel} hash 0x{digest:08x} "
+      f"{'matches' if same else 'does not match'} register 0x{observed:08x}"
+    )
+    if same:
+      if matched is not None:
+        LOGGER.log("[ERROR] More than one partition matches Performance_Counter0.")
+        cleanup_and_exit(args, 1)
+      matched = run
+  if matched is None:
+    LOGGER.log(
+      f"[ERROR] No partition matches Performance_Counter0 0x{observed:08x}."
+    )
+    cleanup_and_exit(args, 1)
+  kernel = partition_kernel_name(
+    model_folder, matched[0], matched[1], matched[2], matched[3]
+  )
+  LOGGER.log(f"[INFO] Halted partition is {kernel}")
+  return matched, halt_count
+
+
+def get_subgraphs(args) -> tuple[str, list[Subgraph]]:
+  """
+  Return every NPU subgraph, sorted by numeric suffix.
+
+  CPU partitions are left out. On hardware the caller selects which of these
+  is halted from Performance_Counter0 instead of walking the list in order.
 
   Args:
       args: Argument object containing at least vaiml_folder_path.
 
   Returns:
-      Tuple[str, Subgraph]: Model folder name and the relevant Subgraph instance.
+      Tuple[str, list[Subgraph]]: Model folder name and NPU subgraphs.
 
   Raises:
-      RuntimeError: If multiple subgraphs are found and none is specified, or if none are found.
+      RuntimeError: If no NPU partition is found.
+      ValueError: If a subgraph name has no numeric suffix.
   """
-  vaiml_folder_path = args.vaiml_folder_path
-  model_folder_name, subgraphs = return_all_subgraphs(vaiml_folder_path)
-  cfg_file = f"{vaiml_folder_path}/vitisai_config.json"
-
-  if Path(cfg_file).exists():
-    with open(cfg_file, "r", encoding="utf-8") as f:
-      data = json.load(f)
-    vaiml_config = None
-    for pas in data["passes"]:
-      if "vaiml_config" in pas:
-        vaiml_config = pas["vaiml_config"]
-        vaiml_subgraphs = vaiml_config.get("include_subgraphs")
-        if vaiml_subgraphs:
-          # If the include_subgraphs option is present, make sure only one subgraph is present
-          if len(vaiml_subgraphs) != 1:
-            raise RuntimeError(
-              "Error: Multiple subgraphs found. "
-              "Please specify the partition by using include_subgraphs "
-              "flag in vaiml_config in vitisai_config.json"
-            )
-          return model_folder_name, Subgraph(
-            folder_path=f"{vaiml_folder_path}/{model_folder_name}/{vaiml_subgraphs[0]}",
-            name=vaiml_subgraphs[0],
-          )
-        break
-
-  if len(subgraphs) > 1:
-    raise RuntimeError(
-      "Error: Multi-partition design detected. Specify a partition in vitisai_config.json"
-    )
-  if len(subgraphs) == 0:
+  model_folder_name, subgraphs = return_all_subgraphs(args.vaiml_folder_path)
+  npu = [s for s in subgraphs if _is_npu_subgraph(s.folder_path)]
+  if not npu:
     raise RuntimeError("Error: No partition found in the input model folder")
-  return model_folder_name, subgraphs[0]
+  npu.sort(key=lambda s: _partition_index(s.name))
+  return model_folder_name, npu

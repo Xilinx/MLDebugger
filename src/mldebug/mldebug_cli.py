@@ -27,12 +27,22 @@ from mldebug import layer_info
 from mldebug.input_parser import (
   check_hw_context,
   check_registry_keys,
-  get_subgraph,
+  get_subgraphs,
   get_failsafe_partitions,
   create_run_flags,
+  partition_kernel_name,
+  select_halted_partition,
+  specified_subgraph,
 )
 from mldebug.interactive_prompt import InteractivePrompt
-from mldebug.utils import LOGGER, setup_logger, close_logger, is_windows, version_string
+from mldebug.utils import (
+  LOGGER,
+  cleanup_and_exit,
+  close_logger,
+  is_windows,
+  setup_logger,
+  version_string,
+)
 
 
 def _apply_unsupported_kernels_from_args(args):
@@ -157,6 +167,18 @@ def debug(args, timestamp, subgraph_name=None, fsp="0", folder_name=None):
     output_dir = f"{folder_name}_{timestamp}/{subgraph_name}/{fsp}"
     args.subgraph_name = subgraph_name
     args.top_output_dir = f"{folder_name}_{timestamp}"
+    # The halt plugin and the driver logs use aie_kernel_name. That string
+    # is not always <model folder>_<subgraph>: hyphens in the folder become
+    # underscores. Fall back to the folder form when the HSI file has no name.
+    hsi = getattr(args, "flexmlrt_hsi", None)
+    subgraph_path = os.path.dirname(os.path.dirname(hsi)) if hsi else ""
+    args.partition_name = partition_kernel_name(
+      folder_name,
+      subgraph_name,
+      subgraph_path,
+      fsp,
+      getattr(args, "fsp_execution_order", ["0"]),
+    )
   else:
     output_dir = f"output_{time.strftime('%m%d%H%M%S')}"
     args.top_output_dir = output_dir
@@ -456,26 +478,103 @@ def app():
     print("Argument check failed")
     return
 
-  subgraph_name = None
-  subgraph_folder_path = ""
   model_folder_name = None
-  fsp_execution_order = ["0"]
-
+  # One entry per NPU partition: (subgraph name, folder, fsp, that subgraph's order).
+  runs = [(None, "", "0", ["0"])]
+  pinned = None
   if args.vaiml_folder_path:
-    model_folder_name, subgraph = get_subgraph(args)
-    subgraph_name, subgraph_folder_path = subgraph.name, subgraph.folder_path
-    fsp_execution_order = get_failsafe_partitions(subgraph_folder_path)
+    model_folder_name, subgraphs = get_subgraphs(args)
+    pinned = specified_subgraph(args.vaiml_folder_path)
+    if pinned:
+      subgraphs = [s for s in subgraphs if s.name == pinned]
+      if not subgraphs:
+        raise RuntimeError(f"Error: Specified partition {pinned} was not found")
+    runs = []
+    for subgraph in subgraphs:
+      order = get_failsafe_partitions(subgraph.folder_path)
+      for fsp in order:
+        runs.append((subgraph.name, subgraph.folder_path, fsp, order))
+
+  # The counters are only meaningful on live hardware with more than one
+  # partition to choose from. A pinned partition, a single partition, and
+  # offline backends keep the previous single-session behavior.
+  identify = (
+    args.backend == "xrt"
+    and pinned is None
+    and len(runs) > 1
+    and not args.dump_aie_status
+    and not args.dump_layers
+  )
+  if len(runs) > 1 and not identify:
+    LOGGER.log(
+      "Running NPU partitions in order: "
+      + ", ".join(name for name, _folder, _fsp, _order in runs)
+    )
 
   timestamp = time.strftime("%m%d%H%M%S")
   registry_checked = False
-  for fsp in fsp_execution_order:
+
+  def launch(run, last):
+    """Debug one partition. last means do not wait for another halt."""
+    nonlocal registry_checked
+    subgraph_name, subgraph_folder_path, fsp, fsp_execution_order = run
     create_run_flags(args, subgraph_folder_path, fsp, fsp_execution_order)
+    args.last_fsp = last
     if not registry_checked and args.backend == "xrt" and is_windows():
       check_registry_keys(args, args.device == AIE_DEV_NPU3)
       registry_checked = True
     debug(args, timestamp, subgraph_name, fsp, model_folder_name)
-    if args.dump_aie_status or args.dump_layers:
-      break
+
+  if identify:
+    if is_windows():
+      sample = runs[0]
+      create_run_flags(args, sample[1], sample[2], sample[3])
+      check_registry_keys(args, args.device == AIE_DEV_NPU3)
+      registry_checked = True
+    # Cores are still halted. Read both counters before debug() releases them.
+    chosen, halt_count = select_halted_partition(args, runs, model_folder_name)
+    if halt_count == 0:
+      LOGGER.log(
+        "[INFO] Halt count is 0. The runtime halts once; "
+        "not waiting between partitions."
+      )
+      launch(chosen, True)
+    elif halt_count > len(runs):
+      LOGGER.log(
+        f"[ERROR] Halt count {halt_count} is past the {len(runs)} known NPU partitions."
+      )
+      cleanup_and_exit(args, 1)
+    else:
+      seen = []
+      while True:
+        if chosen in seen:
+          kernel = partition_kernel_name(
+            model_folder_name, chosen[0], chosen[1], chosen[2], chosen[3]
+          )
+          LOGGER.log(
+            f"[ERROR] Partition {kernel} is halted again at count {halt_count}. "
+            "The halt sequence is out of sync."
+          )
+          cleanup_and_exit(args, 1)
+        seen.append(chosen)
+        # The count starts at 1 and reaches len(runs) on the final halt.
+        launch(chosen, halt_count >= len(runs))
+        if halt_count >= len(runs):
+          break
+        previous = halt_count
+        chosen, halt_count = select_halted_partition(args, runs, model_folder_name)
+        expected = previous + 1
+        if halt_count != expected:
+          LOGGER.log(
+            f"[ERROR] Performance_Counter1 is {halt_count}, expected {expected}. "
+            "A partition halt was missed."
+          )
+          cleanup_and_exit(args, 1)
+  else:
+    for index, run in enumerate(runs):
+      launch(run, index == len(runs) - 1)
+      if args.dump_aie_status or args.dump_layers:
+        break
 
   # End Debug
   close_logger()

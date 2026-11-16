@@ -19,6 +19,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from mldebug.utils import LOGGER, cleanup_and_exit, timeit, wait_until
 
+# How long to wait for the driver to debug-halt every core at the next partition.
+NEXT_PARTITION_HALT_TIMEOUT_S = 300
+
 
 class BatchRunner:
   """
@@ -62,6 +65,11 @@ class BatchRunner:
     single-stamp collapse is handled up front by the Overlay.
     """
     for sid in self.design_info.overlay.get_stampids():
+      # A previous partition's breakpoints survive into this session: the
+      # cores are halted, not reset, between partitions. Those PCs mean
+      # something else in this partition's program.
+      self.aie_utls[sid].clear_pc_breakpoint(0)
+      self.aie_utls[sid].clear_pc_breakpoint(1)
       self.impls[sid].enable_pc_halt()
       if self.args.run_flags.skip_iter:
         self.aie_utls[sid].init_skip_iterations()
@@ -496,29 +504,97 @@ class BatchRunner:
         if layer.runs_replica(sid):
           self.state.pm_reload[sid] = self.check_pm_reload(sid)
 
-    for sid in overlay.get_stampids():
-      self.aie_utls[sid].initialize_stamp()
+    # skip_iter2's last layer already cleared the PC breakpoints and continued
+    # once. initialize_stamp writes DEBUG_CONTROL0 again, and that second
+    # release lets cores run past the next partition's halt.
+    more = self.args.vaiml_folder_path and not getattr(self.args, "last_fsp", True)
+    if not (more and self.args.run_flags.skip_iter2):
+      for sid in overlay.get_stampids():
+        self.aie_utls[sid].initialize_stamp()
 
     LOGGER.log("\nFinished Execution")
     self._handle_fsp()
     self._write_run_summary("SUCCESS")
 
+  def _partition_label(self):
+    """Name of the partition that just ran, as the driver prints it."""
+    return (
+      getattr(self.args, "partition_name", None)
+      or getattr(self.args, "subgraph_name", None)
+      or "unknown"
+    )
+
+  def _ref_core_pc(self):
+    """PC of the reference core, the first core tile of stamp 0."""
+    if not self.aie_utls:
+      return ""
+    utl = self.aie_utls[0]
+    c, r = utl.pm_tracker_tile
+    pc = utl.read_core_pc_tile(c, r)
+    return f", PC: 0x{pc:x}"
+
+  def _cores_all_halted(self):
+    """
+    True when every core in every stamp is debug-halted.
+
+    A failed register read means the hardware context is gone.
+    """
+    try:
+      return all(impl.poll_core_status() for impl in self.impls)
+    except Exception as err:  # pylint: disable=broad-except
+      name = self._partition_label()
+      LOGGER.log(
+        f"[ERROR] Register read failed on partition {name}. "
+        f"The hardware context no longer exists. ({type(err).__name__}: {err})"
+      )
+      cleanup_and_exit(self.args, 1)
+      return False
+
+  def wait_for_next_partition(self):
+    """
+    Wait until every core debug-halts at the next partition.
+
+    The halt can land before the first poll, so an already-halted sample counts.
+    """
+    if self.args.backend == "test":
+      return
+    name = self._partition_label()
+    LOGGER.log(
+      f"Partition {name} finished. "
+      "Waiting for all cores to debug-halt at the next partition."
+    )
+    if self._cores_all_halted():
+      LOGGER.log(
+        f"All cores debug-halted after partition {name}{self._ref_core_pc()}."
+      )
+      return
+    deadline = time.monotonic() + NEXT_PARTITION_HALT_TIMEOUT_S
+    while True:
+      if self._cores_all_halted():
+        LOGGER.log(
+          f"All cores debug-halted after partition {name}{self._ref_core_pc()}."
+        )
+        return
+      if time.monotonic() >= deadline:
+        minutes = NEXT_PARTITION_HALT_TIMEOUT_S // 60
+        LOGGER.log(
+          f"[ERROR] Timed out after {minutes} minutes waiting for all cores "
+          f"to reach debug halt after partition {name}."
+        )
+        cleanup_and_exit(self.args, 1)
+      time.sleep(0.1)
+
   def _handle_fsp(self):
-    """Handle end-of-run logic for VAIML Failsafe Partition mode."""
-    is_fsp = self.args.vaiml_folder_path and not self.args.last_fsp
+    """
+    Close the L3 server, then wait for the next NPU partition's debug halt.
 
-    if is_fsp:
-      for utl in self.aie_utls:
-        utl.set_fsp_breakpoint()
-
+    The server is closed first so the runtime can load that partition.
+    """
+    more = self.args.vaiml_folder_path and not getattr(self.args, "last_fsp", True)
     if self.dumper.debug_server:
       self.dumper.debug_server.close()
-    elif is_fsp:
-      input(
-        "First, please press Enter ONCE in the VAIML process "
-        "to load the next Failsafe Partition and wait for "
-        "`waiting for user input`. Then press Enter here."
-      )
+    if more:
+      self.wait_for_next_partition()
 
   def _write_run_summary(self, status):
     """
