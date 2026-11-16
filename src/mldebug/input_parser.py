@@ -14,6 +14,7 @@ import os
 import subprocess
 import re
 
+from mldebug.aie_overlay import Overlay
 from mldebug.arch import (
   load_aie_arch,
   resolve_variant,
@@ -723,26 +724,6 @@ def _buffer_layout(buffer_info_file: str):
   return batches, max(1, stamps // group), nrow, ncol
 
 
-def _core_tiles(aie_iface, layout, overlay_arg):
-  """Every core tile in the overlay, including replicas collapsed at runtime."""
-  batches, stamps, nrow, ncol = layout
-  if overlay_arg:
-    parsed = [int(part) for part in overlay_arg.split("x")]
-    batches = 1
-    if len(parsed) == 3:
-      stamps, ncol, nrow = parsed
-    elif len(parsed) == 2:
-      stamps, ncol, nrow = 1, parsed[0], parsed[1]
-  offset = aie_iface.AIE_TILE_ROW_OFFSET
-  tiles = []
-  for replica in range(batches * stamps):
-    start = replica * ncol
-    for col in range(start, start + ncol):
-      for row in range(offset, offset + nrow):
-        tiles.append((col, row))
-  return tiles
-
-
 def _candidate_core_tiles(args, runs):
   """Union of core tiles across the partitions that might be halted."""
   tiles = []
@@ -751,7 +732,11 @@ def _candidate_core_tiles(args, runs):
     info = os.path.join(folder, fsp, "buffer_info.json")
     if not os.path.isfile(info):
       continue
-    for tile in _core_tiles(args.aie_iface, _buffer_layout(info), args.overlay):
+    # multistamp keeps replicas that the runtime view collapses.
+    overlay = Overlay(
+      args.aie_iface, _buffer_layout(info), overlay=args.overlay, multistamp=True
+    )
+    for tile in overlay.get_tiles(args.aie_iface.AIE_TILE_T, raw=True):
       if tile not in seen:
         seen.add(tile)
         tiles.append(tile)
