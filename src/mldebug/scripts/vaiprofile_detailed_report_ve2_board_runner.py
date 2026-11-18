@@ -29,8 +29,10 @@ still missing afterwards, the script stops before running any test.
 For each test, from its own folder, the overlay is reloaded first:
   fpgautil -R
   fpgautil -b ./overlay/x_plus_ml.pdi -o ./overlay/x_plus_ml.dtbo
-If <test>/overlay/ lacks either file, or either command fails, the test is an
-ERROR and none of its runs are done.
+If <test>/overlay/ or either file is missing, a warning is printed, fpgautil is
+not run and the test's runs still go ahead. If fpgautil -R fails, a warning is
+printed and fpgautil -b still runs. If fpgautil -b fails, the test is an ERROR
+and none of its runs are done.
 
 Each test is then run once from its own folder:
   python ve2.py --input_model onnx_model/<model>.onnx --analyzer_profiling True
@@ -658,15 +660,25 @@ def ensure_vai_packages(test_path, test_dirs, single, dry_run, timeout):
     return None
 
 
+def missing_overlay(test_dir):
+    """Return a description of what is missing from <test>/overlay/, or None if OVERLAY_FILES are all there."""
+    overlay_dir = os.path.dirname(OVERLAY_FILES[0])
+    if not os.path.isdir(os.path.join(test_dir, overlay_dir)):
+        return '%s/ not found' % overlay_dir
+    missing = [f for f in OVERLAY_FILES if not os.path.isfile(os.path.join(test_dir, f))]
+    return '%s not found' % ' and '.join(missing) if missing else None
+
+
 def load_overlay(test_dir, timeout):
-    """Run FPGA_CMDS from test_dir, logged to <test>/fpgautil.log. Return an error or None."""
+    """Run FPGA_CMDS from test_dir, logged to <test>/fpgautil.log.
+
+    Return (warning or None, error or None): fpgautil -R failing is a warning, fpgautil -b failing is an error.
+    """
     log_path = os.path.join(test_dir, FPGA_LOG)
     open(log_path, 'w').close()
-    for cmd in FPGA_CMDS:
-        err = run_logged(cmd, test_dir, log_path, timeout)
-        if err:
-            return err
-    return None
+    reset_cmd, load_cmd = FPGA_CMDS
+    warning = run_logged(reset_cmd, test_dir, log_path, timeout)
+    return warning, run_logged(load_cmd, test_dir, log_path, timeout)
 
 
 def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
@@ -691,13 +703,13 @@ def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
         return row
     if ops:
         cmd += ['--vaiml_custom_ops', ops]
-    missing = [f for f in OVERLAY_FILES if not os.path.isfile(os.path.join(test_dir, f))]
-    if missing:
-        row['status'] = 'ERROR (%s not found)' % ' and '.join(missing)
-        print('ERROR %s: %s not found; no runs done' % (tag, ' and '.join(missing)))
-        return row
+    overlay_missing = missing_overlay(test_dir)
+    if overlay_missing:
+        msg = '%s; fpgautil skipped' % overlay_missing
+        row['note'] = msg
+        print('WARNING %s: %s' % (tag, msg))
     if profiling and not control_instrumentation_found(test_dir, cfg):
-        row['note'] = CI_WARNING
+        row['note'] = '; '.join(n for n in (row.get('note'), CI_WARNING) if n)
         print('WARNING %s: %s' % (tag, CI_WARNING))
     base_cfg = with_control_instrumentation(cfg) if profiling else None
     if profiling:
@@ -705,8 +717,11 @@ def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
 
     if args.dry_run:
         print('  cwd: %s' % test_dir)
-        for fcmd in FPGA_CMDS:
-            print('  %s >> %s' % (subprocess.list2cmdline(fcmd), FPGA_LOG))
+        if overlay_missing:
+            print('  (fpgautil skipped: %s)' % overlay_missing)
+        else:
+            for fcmd in FPGA_CMDS:
+                print('  %s >> %s' % (subprocess.list2cmdline(fcmd), FPGA_LOG))
         print('  %s > %s' % (subprocess.list2cmdline(cmd), BASE_LOG))
         if has_control_instrumentation(cfg):
             print('  (Base Run: control_instrumentation removed from %s; restored only if the Base Run '
@@ -727,14 +742,19 @@ def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
         row['status'] = 'DRY_RUN'
         return row
 
-    print('%s: Reloading Overlay (fpgautil -R, fpgautil -b) ...' % tag)
-    sys.stdout.flush()
-    err = load_overlay(test_dir, args.timeout)
-    if err:
-        row['status'] = 'ERROR (%s)' % err
-        row.pop('profile', None)
-        print('ERROR %s: %s; no runs done' % (tag, err))
-        return row
+    if not overlay_missing:
+        print('%s: Reloading Overlay (fpgautil -R, fpgautil -b) ...' % tag)
+        sys.stdout.flush()
+        warning, err = load_overlay(test_dir, args.timeout)
+        if warning:
+            msg = '%s; continuing' % warning
+            row['note'] = '; '.join(n for n in (row.get('note'), msg) if n)
+            print('WARNING %s: %s' % (tag, msg))
+        if err:
+            row['status'] = 'ERROR (%s)' % err
+            row.pop('profile', None)
+            print('ERROR %s: %s; no runs done' % (tag, err))
+            return row
     print('%s: Running Inference ...' % tag)
     sys.stdout.flush()
     status, rc, secs, note = base_run(cmd, test_dir, cfg, args.timeout, tag)
