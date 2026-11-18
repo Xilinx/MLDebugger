@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (C) 2026 Advanced Micro Devices, Inc. All rights reserved
+
 """Run VAIML tests on a PetaLinux board with the Detailed Profile Report flow (on by default;
 --no-detailed-profiling turns it off).
 
@@ -15,8 +18,8 @@ a single test, its parent.
 
 Setup, done once (the pip3 commands are skipped with --skip-setup):
   pip3 config set global.trusted-host "..."; pip3 install torch==2.5.1 onnx pandas torchvision==0.20.1 ...
-  LD_LIBRARY_PATH, XRT_AIARM, XLNX_ENABLE_CACHE, ENABLE_ML_DEBUG, QEMU_TEST,
-  DEBUG_VAIML_PARTITION and FLEXMLRT_LOG_LEVEL are set for every run.
+  LD_LIBRARY_PATH, XRT_AIARM, XLNX_ENABLE_CACHE, ENABLE_ML_DEBUG, QEMU_TEST and
+  DEBUG_VAIML_PARTITION are set for every run.
 Then, also once and even with --skip-setup,
   pip3 list | grep -iE 'flexmlrt|voe|onnxruntime[-_]vitisai'
 checks the VAI packages (pip may list onnxruntime-vitisai as onnxruntime_vitisai).
@@ -126,7 +129,7 @@ FPGA_CMDS = (['fpgautil', '-R'],
 FPGA_LOG = 'fpgautil.log'
 LD_PATHS = ('/usr/lib/python3.12/site-packages/flexmlrt/lib/', '/usr/lib/python3.12/site-packages/voe/lib/')
 ENV = (('XRT_AIARM', 'true'), ('XLNX_ENABLE_CACHE', '0'), ('ENABLE_ML_DEBUG', '0'), ('QEMU_TEST', '0'),
-       ('DEBUG_VAIML_PARTITION', '2'), ('FLEXMLRT_LOG_LEVEL', 'debug'))
+       ('DEBUG_VAIML_PARTITION', '2'))
 PROFILE_RUNS = (
     ('A', 'detailed_core_shim_read_ch_0',
      {'interface_tile': 'detailed_ddr_read_bandwidth:0', 'aie_tile': 'compute_io_bound'}),
