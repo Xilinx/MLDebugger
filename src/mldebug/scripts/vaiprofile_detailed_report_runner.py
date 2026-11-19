@@ -12,9 +12,23 @@ onnx_model/ or vitisai_config.json; container folders are searched recursively
 without entering test folders, hidden folders or *.partial folders. Tests are
 named by their path relative to --test-path (a single test by its basename).
 --archive is a tar or zip that is extracted (by default next to it, into a
-folder named after it) and then used as --test-path. ve2.py is taken from --runner, else the
-nearest one per test: the test folder, its parents up to --test-path, then, for
-a single test, its parent.
+folder named after it) and then used as --test-path. A test folder needs
+vitisai_config.json, or it is skipped.
+
+Each test is run either with --runner-cmd or with the default ve2.py runner.
+--runner-cmd "CMD" is the whole command line, quoted as one argument, e.g.
+  --runner-cmd "python3 /path/to/ve2.py --input_model onnx_model/resnet50.onnx --analyzer_profiling True"
+(use single quotes if $VARs in it must be expanded at run time). It is run as
+sh -c "CMD" from each test folder, unchanged (nothing is added to it), for the
+base run and for each profiling run, so it must read vitisai_config.json, which
+this script rewrites before each run, from its current folder. No model is looked
+for with --runner-cmd.
+Without --runner-cmd, ve2.py is the nearest one per test: the test folder, its
+parents up to --test-path, then, for a single test, its parent; a test without
+one is skipped. The model is found from the test's cache folder X, an immediate
+subfolder holding X.rai: onnx_model/X.onnx, else X/X.onnx. If there is no such
+cache folder or neither .onnx file, the test is an ERROR and none of its runs
+are done.
 
 Setup, done once (the pip3 commands are skipped with --skip-setup):
   pip3 config set global.trusted-host "..."; pip3 install torch==2.5.1 onnx pandas torchvision==0.20.1 ...
@@ -28,6 +42,11 @@ in order, then --test-path, then, for a single test, its parent) is used to run
   pip3 install flexmlrt onnxruntime_vitisai voe --no-deps --force-reinstall --find-links ./whl_files/
 from that folder. If there is no whl_files/, the install fails, or a package is
 still missing afterwards, the script stops before running any test.
+Setup also checks whether fpgautil is on PATH (and reports whether
+/sys/class/fpga_manager has an entry). If fpgautil is not on PATH, a warning is
+printed, the overlay is not reloaded for any test, and the tests still run; each
+test with an overlay/ folder gets the note "fpgautil not available; fpgautil
+skipped".
 
 For each test, from its own folder, the overlay is reloaded first:
   fpgautil -R
@@ -37,13 +56,16 @@ not run and the test's runs still go ahead. If fpgautil -R fails, a warning is
 printed and fpgautil -b still runs. If fpgautil -b fails, the test is an ERROR
 and none of its runs are done.
 
-Each test is then run once from its own folder:
-  python ve2.py --input_model onnx_model/<model>.onnx --analyzer_profiling True
-                [--vaiml_custom_ops <test>/custom_ops_config.json]
-If vaiml_config.custom_ops is non-empty in vitisai_config.json or
+Each test is then run once from its own folder, with --runner-cmd or with:
+  python3 ve2.py --input_model <onnx_model/X.onnx or X/X.onnx> --analyzer_profiling True
+                 [--vaiml_custom_ops <test>/custom_ops_config.json]
+With ve2.py, if vaiml_config.custom_ops is non-empty in vitisai_config.json or
 vitisai_config.json.orig, <test>/custom_ops_config.json must exist and is
 passed with --vaiml_custom_ops; if it is missing the test is an ERROR and none
 of its runs are done.
+A run (base or profiling, with either runner) passes if it exits with code 0
+and its board_run.log contains none of "[error] [FLEXMLRT]",
+"ERT_CMD_STATE_TIMEOUT" and "FlexMLRT Exception:".
 If vitisai_config.json lists control_instrumentation in
 vaiml_config.ai_analyzer_enhanced_profiling, the base run uses it with
 control_instrumentation removed from that list. vitisai_config.json is restored
@@ -92,6 +114,9 @@ import time
 import zipfile
 
 RUNNER = 've2.py'
+MODEL_DIR = 'onnx_model'
+CACHE_EXT = '.rai'
+RUN_ERRORS = ('[error] [FLEXMLRT]', 'ERT_CMD_STATE_TIMEOUT', 'FlexMLRT Exception:')
 CONFIG = 'vitisai_config.json'
 CONFIG_ORIG = CONFIG + '.orig'
 CONFIG_BACKUP = CONFIG + '.dpr_backup'
@@ -127,6 +152,8 @@ OVERLAY_FILES = ('overlay/x_plus_ml.pdi', 'overlay/x_plus_ml.dtbo')
 FPGA_CMDS = (['fpgautil', '-R'],
              ['fpgautil', '-b', './overlay/x_plus_ml.pdi', '-o', './overlay/x_plus_ml.dtbo'])
 FPGA_LOG = 'fpgautil.log'
+FPGA_TOOL = 'fpgautil'
+FPGA_MANAGER_DIR = '/sys/class/fpga_manager'
 LD_PATHS = ('/usr/lib/python3.12/site-packages/flexmlrt/lib/', '/usr/lib/python3.12/site-packages/voe/lib/')
 ENV = (('XRT_AIARM', 'true'), ('XLNX_ENABLE_CACHE', '0'), ('ENABLE_ML_DEBUG', '0'), ('QEMU_TEST', '0'),
        ('DEBUG_VAIML_PARTITION', '2'))
@@ -275,20 +302,41 @@ def find_test_dirs(test_path):
     return False, found
 
 
-def discover(test_dirs):
-    """Return (tests, skipped): tests are (name, test_dir, model_file); skipped are (name, reason)."""
-    tests, skipped = [], []
+def find_model(name, test_dir):
+    """Return (model path relative to test_dir or None, error or None) for the default ve2.py runner.
+
+    The cache folder X is an immediate subfolder of test_dir holding X.rai; the model is
+    onnx_model/X.onnx, else X/X.onnx.
+    """
+    caches = sorted(d for d in os.listdir(test_dir) if not d.startswith('.')
+                    and os.path.isfile(os.path.join(test_dir, d, d + CACHE_EXT)))
+    if not caches:
+        return None, 'no <X>/<X>%s cache folder' % CACHE_EXT
+    if len(caches) > 1:
+        print('WARNING %s: several cache folders (%s); using %s' % (name, ', '.join(caches), caches[0]))
+    key = caches[0]
+    for rel in (os.path.join(MODEL_DIR, key + '.onnx'), os.path.join(key, key + '.onnx')):
+        if os.path.isfile(os.path.join(test_dir, rel)):
+            return rel, None
+    return None, 'no %s/%s.onnx or %s/%s.onnx' % (MODEL_DIR, key, key, key)
+
+
+def discover(test_dirs, need_model):
+    """Return (tests, skipped, errors): tests are (name, test_dir, model path or None); skipped and
+    errors are (name, reason). The model is looked for only if need_model (default ve2.py runner)."""
+    tests, skipped, errors = [], [], []
     for name, path in test_dirs:
-        models = sorted(glob.glob(os.path.join(path, 'onnx_model', '*.onnx')))
-        if not models:
-            skipped.append((name, 'no onnx_model/*.onnx'))
-        elif not os.path.isfile(os.path.join(path, CONFIG)):
+        if not os.path.isfile(os.path.join(path, CONFIG)):
             skipped.append((name, 'no %s' % CONFIG))
-        else:
-            if len(models) > 1:
-                print('WARNING %s: several onnx_model/*.onnx; using %s' % (name, os.path.basename(models[0])))
-            tests.append((name, path, os.path.basename(models[0])))
-    return tests, skipped
+            continue
+        model = None
+        if need_model:
+            model, err = find_model(name, path)
+            if err:
+                errors.append((name, err))
+                continue
+        tests.append((name, path, model))
+    return tests, skipped, errors
 
 
 def find_runner(test_dir, test_path, single):
@@ -423,16 +471,33 @@ def remove_outputs(test_dir):
             os.remove(os.path.join(test_dir, f))
 
 
+def log_error(log_path):
+    """Return the first RUN_ERRORS text found in log_path, or None. The 'Command: ' header line is not scanned."""
+    try:
+        with open(log_path, errors='replace') as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    if text.startswith('Command: '):
+        text = text.split('\n', 1)[1] if '\n' in text else ''
+    return next((e for e in RUN_ERRORS if e in text), None)
+
+
 def inference(cmd, test_dir, log_path, timeout):
-    """Run ve2.py. Return (status, exit code, seconds); PASS needs exit code 0 and ofm_0.npy."""
+    """Run the runner command. Return (status, exit code, seconds).
+
+    PASS needs exit code 0 and none of RUN_ERRORS in log_path; a RUN_ERRORS hit is reported
+    even if the exit code is not 0.
+    """
     remove_outputs(test_dir)
     rc, timed_out, secs = run_step(cmd, test_dir, log_path, timeout)
     if timed_out:
         return timed_out, '', secs
+    found = log_error(log_path)
+    if found:
+        return 'FAIL (%s in %s)' % (found, os.path.basename(log_path)), rc, secs
     if rc != 0:
         return 'FAIL', rc, secs
-    if not os.path.isfile(os.path.join(test_dir, 'ofm_0.npy')):
-        return 'FAIL (no ofm_0.npy)', rc, secs
     return 'PASS', rc, secs
 
 
@@ -603,6 +668,30 @@ def setup(test_path, skip, dry_run, timeout):
     return None
 
 
+def check_fpgautil(test_path):
+    """Print (and log to setup.log) whether fpgautil is on PATH and whether FPGA_MANAGER_DIR has an entry.
+
+    Return True if fpgautil is on PATH; FPGA_MANAGER_DIR is reported only, never a reason to skip.
+    """
+    path = shutil.which(FPGA_TOOL)
+    try:
+        managers = sorted(os.listdir(FPGA_MANAGER_DIR))
+    except OSError:
+        managers = []
+    manager = ('%s: %s' % (FPGA_MANAGER_DIR, ', '.join(managers)) if managers
+               else '%s: no entry (FPGA manager driver not loaded?)' % FPGA_MANAGER_DIR)
+    if path:
+        lines = ['%s: %s' % (FPGA_TOOL, path), manager]
+    else:
+        lines = ['WARNING: %s not available (not on PATH; %s); overlay reload skipped for all tests'
+                 % (FPGA_TOOL, manager)]
+    with open(os.path.join(test_path, SETUP_LOG), 'a') as log:
+        for line in lines:
+            print(line)
+            log.write(line + '\n')
+    return path is not None
+
+
 def run_logged(cmd, cwd, log_path, timeout):
     """Run cmd appending to log_path. Return None on exit code 0, else an error message."""
     name = subprocess.list2cmdline(cmd)
@@ -687,8 +776,8 @@ def load_overlay(test_dir, timeout):
 def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
     """Run (or, with --dry-run, print) the base run and profiling runs of one test. Return its summary row."""
     row = {'test': name, 'log': os.path.join(test_dir, BASE_LOG)}
-    if test_runner is None:
-        row.update(status='SKIPPED', note='no %s in the test folder or its parents (use --runner)' % RUNNER)
+    if not args.runner_cmd and test_runner is None:
+        row.update(status='SKIPPED', note='no %s in the test folder or its parents (use --runner-cmd)' % RUNNER)
         print('SKIP %s: %s' % (tag, row['note']))
         return row
     restore_stale_backup(test_dir, tag, args.dry_run)
@@ -698,17 +787,26 @@ def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
         row.update(status='SKIPPED', note='cannot read %s: %s' % (CONFIG, e))
         print('SKIP %s: %s' % (tag, row['note']))
         return row
-    cmd = [sys.executable, test_runner, '--input_model', 'onnx_model/' + model, '--analyzer_profiling', 'True']
-    ops, err = custom_ops_file(test_dir, cfg)
-    if err:
-        row['status'] = 'ERROR (%s)' % err
-        print('ERROR %s: %s; no runs done' % (tag, err))
-        return row
-    if ops:
-        cmd += ['--vaiml_custom_ops', ops]
+    if args.runner_cmd:
+        cmd = ['sh', '-c', args.runner_cmd]
+    else:
+        cmd = [sys.executable, test_runner, '--input_model', model, '--analyzer_profiling', 'True']
+        ops, err = custom_ops_file(test_dir, cfg)
+        if err:
+            row['status'] = 'ERROR (%s)' % err
+            print('ERROR %s: %s; no runs done' % (tag, err))
+            return row
+        if ops:
+            cmd += ['--vaiml_custom_ops', ops]
     overlay_missing = missing_overlay(test_dir)
-    if overlay_missing:
-        msg = '%s; fpgautil skipped' % overlay_missing
+    has_overlay_dir = os.path.isdir(os.path.join(test_dir, os.path.dirname(OVERLAY_FILES[0])))
+    skip_reason = None
+    if not args.fpgautil_available and has_overlay_dir:
+        skip_reason = '%s not available' % FPGA_TOOL
+    elif overlay_missing:
+        skip_reason = overlay_missing
+    if skip_reason:
+        msg = '%s; fpgautil skipped' % skip_reason
         row['note'] = msg
         print('WARNING %s: %s' % (tag, msg))
     if profiling and not control_instrumentation_found(test_dir, cfg):
@@ -720,8 +818,8 @@ def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
 
     if args.dry_run:
         print('  cwd: %s' % test_dir)
-        if overlay_missing:
-            print('  (fpgautil skipped: %s)' % overlay_missing)
+        if skip_reason:
+            print('  (fpgautil skipped: %s)' % skip_reason)
         else:
             for fcmd in FPGA_CMDS:
                 print('  %s >> %s' % (subprocess.list2cmdline(fcmd), FPGA_LOG))
@@ -745,7 +843,7 @@ def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
         row['status'] = 'DRY_RUN'
         return row
 
-    if not overlay_missing:
+    if not skip_reason:
         print('%s: Reloading Overlay (fpgautil -R, fpgautil -b) ...' % tag)
         sys.stdout.flush()
         warning, err = load_overlay(test_dir, args.timeout)
@@ -794,15 +892,18 @@ def run_one_test(name, test_dir, model, tag, test_runner, profiling, args):
 
 def main():
     ap = argparse.ArgumentParser(usage='%(prog)s --test-path TEST_PATH [options]', description=HELP_DESCRIPTION,
-                                 formatter_class=HelpFormatter, add_help=False)
+                                 formatter_class=HelpFormatter, add_help=False, allow_abbrev=False)
     ap._optionals.title = 'Options'
     ap.add_argument('-h', '--help', action='help', help='Show this help message and exit')
     ap.add_argument('--help-all', action=HelpAllAction, help=argparse.SUPPRESS)
     ap.add_argument('--test-path', help='A test folder, or a folder holding test folders at any depth')
     ap.add_argument('--archive', help=argparse.SUPPRESS)
     ap.add_argument('--extract-dir', help=argparse.SUPPRESS)
-    ap.add_argument('--runner', help='Path to ve2.py (default: the nearest ve2.py per test: the test folder, '
-                                     'its parents up to --test-path, then, for a single test, its parent)')
+    ap.add_argument('--runner-cmd', metavar='"CMD"',
+                    help='Whole command line to run each test with, quoted as one argument; run with sh -c from '
+                         'each test folder, with nothing added (default: the nearest ve2.py per test: the test '
+                         'folder, its parents up to --test-path, then, for a single test, its parent, run as '
+                         'python3 ve2.py --input_model <model> --analyzer_profiling True)')
     ap.add_argument('--no-detailed-profiling', action='store_true',
                     help='Only do the base run of each test; by default, after a PASS, each test is run %d more '
                          'times with detailed profiling and the data is collected in <test>/%s'
@@ -821,6 +922,8 @@ def main():
         ap.error('--test-path is required')
     if args.extract_dir and not args.archive:
         ap.error('--extract-dir needs --archive')
+    if args.runner_cmd is not None and not args.runner_cmd.strip():
+        ap.error('--runner-cmd is empty')
     print('Control Instrumentation based Detailed Profiling : %s'
           % ('ON' if profiling else 'OFF (--no-detailed-profiling)'))
     banner('Test Discovery')
@@ -841,45 +944,48 @@ def main():
             ap.error('--test-path is not a directory: %s' % test_path)
     single, test_dirs = find_test_dirs(test_path)
     print('Test path: %s (%s)' % (test_path, 'single test' if single else 'container'))
-    runner = None
-    if args.runner:
-        runner = os.path.abspath(args.runner)
-        if not os.path.isfile(runner):
-            ap.error('--runner file not found: %s' % runner)
-    print('Runner: %s' % ('--runner %s' % runner if runner else 'nearest %s per test' % RUNNER))
-    tests, skipped = discover(test_dirs)
-    rows = [{'test': n, 'status': 'SKIPPED', 'note': r} for n, r in skipped]
+    print('Runner: %s' % ('--runner-cmd %s' % args.runner_cmd if args.runner_cmd
+                          else 'nearest %s per test' % RUNNER))
     found = len(test_dirs)
-    print('Found %d test folder%s%s in %s: %d to run, %d skipped' % (
+    if not found:
+        print('ERROR: no tests found in %s' % test_path)
+        banner_end()
+        return 1
+    tests, skipped, errors = discover(test_dirs, need_model=not args.runner_cmd)
+    rows = [{'test': n, 'status': 'SKIPPED', 'note': r} for n, r in skipped]
+    rows += [{'test': n, 'status': 'ERROR (%s)' % r} for n, r in errors]
+    print('Found %d test folder%s%s in %s: %d to run, %d skipped, %d error' % (
         found, '' if found == 1 else 's', ' (single test)' if single else '',
-        'archive %s' % archive if args.archive else test_path, len(tests), len(skipped)))
+        'archive %s' % archive if args.archive else test_path, len(tests), len(skipped), len(errors)))
     for i, (name, _, _) in enumerate(tests, 1):
         print('  %d. %s' % (i, name))
     for name, reason in skipped:
         print('SKIP %s: %s' % (name, reason))
+    for name, reason in errors:
+        print('ERROR %s: %s; no runs done' % (name, reason))
     if not tests:
-        print('ERROR: no tests found in %s' % test_path)
-        banner_end()
-        return 1
+        print('ERROR: no runnable tests in %s; setup skipped' % test_path)
     banner_end()
 
-    banner('Setup Board and Environment')
-    err = setup(test_path, args.skip_setup, args.dry_run, args.timeout)
-    if err:
-        print('ERROR: setup failed: %s' % err)
+    if tests:
+        banner('Setup Board and Environment')
+        err = setup(test_path, args.skip_setup, args.dry_run, args.timeout)
+        if err:
+            print('ERROR: setup failed: %s' % err)
+            banner_end()
+            return 1
+        args.fpgautil_available = check_fpgautil(test_path)
+        err = ensure_vai_packages(test_path, [d for _, d in test_dirs], single, args.dry_run, args.timeout)
+        if err:
+            print('ERROR: %s' % err)
+            banner_end()
+            return 1
         banner_end()
-        return 1
-    err = ensure_vai_packages(test_path, [d for _, d in test_dirs], single, args.dry_run, args.timeout)
-    if err:
-        print('ERROR: %s' % err)
-        banner_end()
-        return 1
-    banner_end()
 
     for i, (name, test_dir, model) in enumerate(tests, 1):
         prefix = '[%d/%d] ' % (i, len(tests))
         banner(name, prefix)
-        test_runner = runner or find_runner(test_dir, test_path, single)
+        test_runner = None if args.runner_cmd else find_runner(test_dir, test_path, single)
         rows.append(run_one_test(name, test_dir, model, prefix + name, test_runner, profiling, args))
         banner_end()
 
