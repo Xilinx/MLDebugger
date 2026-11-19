@@ -478,6 +478,10 @@ def app():
     print("Argument check failed")
     return
 
+  # create_run_flags restores this before every set_device. The resolved base
+  # device must not be fed back in as if the user had passed -d.
+  args.device_arg = args.device
+
   model_folder_name = None
   # One entry per NPU partition: (subgraph name, folder, fsp, that subgraph's order).
   runs = [(None, "", "0", ["0"])]
@@ -489,23 +493,31 @@ def app():
       subgraphs = [s for s in subgraphs if s.name == pinned]
       if not subgraphs:
         raise RuntimeError(f"Error: Specified partition {pinned} was not found")
-    runs = []
-    for subgraph in subgraphs:
-      order = get_failsafe_partitions(subgraph.folder_path)
-      for fsp in order:
-        runs.append((subgraph.name, subgraph.folder_path, fsp, order))
+    # -s and --dump-aie-status with one subgraph keep using its work dir, overlay
+    # and device. With several to choose from they are raw hardware access: no
+    # partition metadata and no halt counters.
+    if not (args.aie_only and len(subgraphs) > 1):
+      runs = []
+      for subgraph in subgraphs:
+        order = get_failsafe_partitions(subgraph.folder_path)
+        for fsp in order:
+          runs.append((subgraph.name, subgraph.folder_path, fsp, order))
 
   # The counters are only meaningful on live hardware with more than one
-  # partition to choose from. A pinned partition, a single partition, and
-  # offline backends keep the previous single-session behavior.
+  # partition to choose from. A pinned partition, a single partition, standalone
+  # mode, and offline backends keep a single session.
   identify = (
     args.backend == "xrt"
     and pinned is None
     and len(runs) > 1
+    and not args.aie_only
     and not args.dump_aie_status
     and not args.dump_layers
   )
-  if len(runs) > 1 and not identify:
+  # include_subgraphs pins one subgraph: its parts keep the legacy FSP flow
+  # (arm a breakpoint, prompt the user) instead of waiting for the plugin's halt.
+  args.legacy_fsp = pinned is not None
+  if len(runs) > 1 and not identify and not args.legacy_fsp:
     LOGGER.log(
       "Running NPU partitions in order: "
       + ", ".join(name for name, _folder, _fsp, _order in runs)
@@ -532,35 +544,23 @@ def app():
       check_registry_keys(args, args.device == AIE_DEV_NPU3)
       registry_checked = True
     # Cores are still halted. Read both counters before debug() releases them.
+    # Counter 1 is 0 when the plugin halts only the first run. That selects the
+    # manual advance, starting at the halted partition. Any higher count is one
+    # step of a sequence that may repeat a partition, so follow it until the
+    # context goes away rather than stopping after len(runs) halts.
     chosen, halt_count = select_halted_partition(args, runs, model_folder_name)
     if halt_count == 0:
       LOGGER.log(
         "[INFO] Halt count is 0. The runtime halts once; "
-        "not waiting between partitions."
+        "later partitions use the manual advance."
       )
-      launch(chosen, True)
-    elif halt_count > len(runs):
-      LOGGER.log(
-        f"[ERROR] Halt count {halt_count} is past the {len(runs)} known NPU partitions."
-      )
-      cleanup_and_exit(args, 1)
+      args.legacy_fsp = True
+      tail = runs[runs.index(chosen):]
+      for index, run in enumerate(tail):
+        launch(run, index == len(tail) - 1)
     else:
-      seen = []
       while True:
-        if chosen in seen:
-          kernel = partition_kernel_name(
-            model_folder_name, chosen[0], chosen[1], chosen[2], chosen[3]
-          )
-          LOGGER.log(
-            f"[ERROR] Partition {kernel} is halted again at count {halt_count}. "
-            "The halt sequence is out of sync."
-          )
-          cleanup_and_exit(args, 1)
-        seen.append(chosen)
-        # The count starts at 1 and reaches len(runs) on the final halt.
-        launch(chosen, halt_count >= len(runs))
-        if halt_count >= len(runs):
-          break
+        launch(chosen, False)
         previous = halt_count
         chosen, halt_count = select_halted_partition(args, runs, model_folder_name)
         expected = previous + 1
@@ -573,7 +573,7 @@ def app():
   else:
     for index, run in enumerate(runs):
       launch(run, index == len(runs) - 1)
-      if args.dump_aie_status or args.dump_layers:
+      if args.dump_aie_status:
         break
 
   # End Debug

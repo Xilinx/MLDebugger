@@ -158,15 +158,28 @@ class InteractiveController:
     Continue execution until the next manual breakpoint or to the end of design.
 
     When another NPU partition follows, the final continue releases the cores
-    and waits for the driver's debug halt at the start of that partition.
+    and waits for the driver's debug halt at the start of that partition. A
+    pinned subgraph (include_subgraphs) keeps the legacy flow: arm a
+    lock-acquire breakpoint and ask the user to load the next partition.
     """
     if self.args.aie_only:
       print("This Functionality is disabled for aie-only debug.")
       return
 
     is_next = self.args.vaiml_folder_path and not getattr(self.args, "last_fsp", True)
+    legacy = getattr(self.args, "legacy_fsp", False)
     if self.state.continue_to_finish:
       print("Running AIE to end")
+      if is_next and legacy:
+        for sid, impl in enumerate(self.impls):
+          impl.continue_aie()
+          self.aie_utls[sid].set_fsp_breakpoint()
+        print(
+          "First, please press Enter ONCE in the VAIML process"
+          " to load the next Failsafe Partition, and wait for "
+          "`waiting for user input`. Then press q here."
+        )
+        return
       if is_next:
         # skip_iter2's last layer already released the cores once.
         if not self.args.run_flags.skip_iter2:
@@ -212,7 +225,9 @@ class InteractiveController:
 
     if self.state.continue_to_finish:
       next_text = ""
-      if is_next:
+      if is_next and legacy:
+        next_text = " or to load the next Failsafe Partition"
+      elif is_next:
         next_text = ", then wait for the next partition"
       print(
         f"Reached Final iteration : {ta_itr} of layer : {ta_layer}. "

@@ -537,18 +537,32 @@ work. There are two such mechanisms.
 
 **Subgraphs** are the supported, modern split. The compiler partitions
 the model into independent compute graphs early, each in its own
-folder under `vaiml_folder/<model>/vaiml_par_<N>/`. The debugger debugs
-one subgraph at a time. If the model has more than one subgraph the
-user must name the one to debug in `vitisai_config.json` under
-`passes[].vaiml_config.include_subgraphs`.
+folder under `vaiml_folder/<model>/vaiml_par_<N>/`. On XRT, with more
+than one NPU partition and no `include_subgraphs`, the debugger reads
+the halt plugin's performance counters before releasing the cores.
+Counter 0 is the FNV-1a hash of the halted partition's kernel name.
+Counter 1 is the halt count: 0 when the plugin halts only the first
+run of the context (`halt_on_every_run` off), otherwise 1 for the first
+halt and one higher for each later halt. A count of 1 or more is
+followed until the hardware context goes away, and a partition may
+run again later in the sequence. A count of 0, or a subgraph named in
+`vitisai_config.json` under
+`passes[].vaiml_config.include_subgraphs`, keeps the manual advance
+described below. `--dump_layers` writes every partition; it does not
+read the counters. `-s` and `--dump-aie-status` use one subgraph's
+metadata when there is only one, and otherwise talk to the hardware
+directly with the default overlay (or `-o`).
 
 **Failsafe partitions (FSP)** are an older mechanism, deprecated but
 still supported. They split a single subgraph into multiple
 program-memory partitions for very large models. Each FSP has its own
 work directory and `buffer_info.json`. Their execution order comes from
-`partition-info.json`. The debugger runs `debug()` once per FSP,
-prompting the user (or coordinating with FlexML) to advance between
-partitions.
+`partition-info.json`. On the manual path the debugger runs `debug()`
+once per FSP. Between parts it arms a breakpoint on the lock-acquire
+instruction. With `-l3` or `--automated_debug` it then closes the debug
+server so FlexML can load the next part. Otherwise it asks the user to
+press Enter in the VAIML process, wait for `waiting for user input`,
+and press Enter in the debugger.
 
 ```
 vaiml_folder/<model>/vaiml_par_0/

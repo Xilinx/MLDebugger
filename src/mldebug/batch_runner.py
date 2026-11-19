@@ -506,9 +506,11 @@ class BatchRunner:
 
     # skip_iter2's last layer already cleared the PC breakpoints and continued
     # once. initialize_stamp writes DEBUG_CONTROL0 again, and that second
-    # release lets cores run past the next partition's halt.
+    # release lets cores run past the next partition's halt. The legacy FSP
+    # flow arms its own breakpoint afterwards, so it always releases here.
     more = self.args.vaiml_folder_path and not getattr(self.args, "last_fsp", True)
-    if not (more and self.args.run_flags.skip_iter2):
+    legacy = getattr(self.args, "legacy_fsp", False)
+    if not (more and not legacy and self.args.run_flags.skip_iter2):
       for sid in overlay.get_stampids():
         self.aie_utls[sid].initialize_stamp()
 
@@ -537,25 +539,45 @@ class BatchRunner:
     """
     True when every core in every stamp is debug-halted.
 
-    A failed register read means the hardware context is gone.
+    None means the register read failed. Between partitions that is the
+    hardware context going away after this partition has already finished.
     """
     try:
       return all(impl.poll_core_status() for impl in self.impls)
     except Exception as err:  # pylint: disable=broad-except
-      name = self._partition_label()
-      LOGGER.log(
-        f"[ERROR] Register read failed on partition {name}. "
-        f"The hardware context no longer exists. ({type(err).__name__}: {err})"
-      )
-      cleanup_and_exit(self.args, 1)
-      return False
+      self._context_gone_error = err
+      return None
+
+  def _session_done_context_gone(self):
+    """
+    End the session successfully.
+
+    This partition's dumps are already written. The context disappeared
+    while waiting for the next one, which is how a later subgraph on its
+    own context looks from here.
+    """
+    err = self._context_gone_error
+    name = self._partition_label()
+    LOGGER.log(
+      f"[INFO] Partition {name} finished. The hardware context is gone, "
+      f"so this session is complete. ({type(err).__name__}: {err})"
+    )
+    self._write_run_summary("SUCCESS")
+    cleanup_and_exit(self.args, 0)
 
   def wait_for_next_partition(self):
     """
     Wait until every core debug-halts at the next partition.
 
     The halt can land before the first poll, so an already-halted sample counts.
+    The L3 server is closed first so FlexML can load the next partition.
+    A failed read ends the session successfully: this partition is done and
+    the context is no longer here to halt.
     """
+    # Batch mode also closes in _handle_fsp. Closing again is a no-op, and
+    # interactive continue reaches this wait without that call.
+    if self.dumper.debug_server:
+      self.dumper.debug_server.close()
     if self.args.backend == "test":
       return
     name = self._partition_label()
@@ -563,14 +585,22 @@ class BatchRunner:
       f"Partition {name} finished. "
       "Waiting for all cores to debug-halt at the next partition."
     )
-    if self._cores_all_halted():
+    halted = self._cores_all_halted()
+    if halted is None:
+      self._session_done_context_gone()
+      return
+    if halted:
       LOGGER.log(
         f"All cores debug-halted after partition {name}{self._ref_core_pc()}."
       )
       return
     deadline = time.monotonic() + NEXT_PARTITION_HALT_TIMEOUT_S
     while True:
-      if self._cores_all_halted():
+      halted = self._cores_all_halted()
+      if halted is None:
+        self._session_done_context_gone()
+        return
+      if halted:
         LOGGER.log(
           f"All cores debug-halted after partition {name}{self._ref_core_pc()}."
         )
@@ -581,6 +611,10 @@ class BatchRunner:
           f"[ERROR] Timed out after {minutes} minutes waiting for all cores "
           f"to reach debug halt after partition {name}."
         )
+        # Dumps for this partition are already on disk. The context is still
+        # readable, so the next halt failing is a real error. Record it, or
+        # automated_debug keeps the previous partition's SUCCESS.
+        self._write_run_summary("FAIL")
         cleanup_and_exit(self.args, 1)
       time.sleep(0.1)
 
@@ -589,8 +623,24 @@ class BatchRunner:
     Close the L3 server, then wait for the next NPU partition's debug halt.
 
     The server is closed first so the runtime can load that partition.
+    A pinned subgraph (include_subgraphs) keeps the legacy flow instead: arm a
+    lock-acquire breakpoint and, without an L3 server, ask the user to load
+    the next partition.
     """
     more = self.args.vaiml_folder_path and not getattr(self.args, "last_fsp", True)
+    if getattr(self.args, "legacy_fsp", False):
+      if more:
+        for utl in self.aie_utls:
+          utl.set_fsp_breakpoint()
+      if self.dumper.debug_server:
+        self.dumper.debug_server.close()
+      elif more:
+        input(
+          "First, please press Enter ONCE in the VAIML process "
+          "to load the next Failsafe Partition and wait for "
+          "`waiting for user input`. Then press Enter here."
+        )
+      return
     if self.dumper.debug_server:
       self.dumper.debug_server.close()
     if more:

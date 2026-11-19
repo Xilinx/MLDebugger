@@ -100,6 +100,13 @@ def create_run_flags(args, subgraph_path: str, fsp: str, fsp_execution_order: li
     args.external_buffer_id = args.x2_folder_path + "/external_buffer_id.json"
     args.subgraph_name = None
 
+  # set_device writes the base device into args.device and treats a later
+  # non-empty value as an explicit -d. Put the original -d back (None when
+  # the user omitted it) so t20/t10 are not resolved as telluride.
+  if not hasattr(args, "device_arg"):
+    args.device_arg = args.device
+  args.device = args.device_arg
+
   set_device(args)
   set_coredump_overlay(args)
   set_aie_scc(args, subgraph_path)
