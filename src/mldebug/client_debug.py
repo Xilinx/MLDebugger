@@ -283,12 +283,22 @@ class ClientDebug:
   def dump_layers(self, filename=None):
     """
     Print a text report of every debuggable layer, or write it to filename.
+
+    Later partitions append to an existing file so one path collects them all.
     """
     report = format_layer_report(self.design_info)
+    name = getattr(self.args, "partition_name", None)
+    if name:
+      report = f"{name}\n{report}"
     if not filename:
       print(report)
       return
-    with open(filename, "w", encoding="utf-8") as fd:
+    # The first partition of this process truncates. Later ones append.
+    append = getattr(self.args, "layers_report_started", False)
+    self.args.layers_report_started = True
+    with open(filename, "a" if append else "w", encoding="utf-8") as fd:
+      if append:
+        fd.write("\n")
       fd.write(report + "\n")
     print(f"[INFO] Layer report written to {filename}")
 
